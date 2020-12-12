@@ -25,6 +25,7 @@ db.connect(err => {
     process.exit(1);
   } else {
     console.log('Connected to MongoDB');
+    app.listen(PORT, () => console.log(`Server listening on port :${PORT}`));
   }
 });
 
@@ -45,5 +46,3 @@ app.use('/api/user', userController);
 app.get('/', async (_, res) => {
   res.send('Use `/api/<endpoint>` to access API');
 });
-
-app.listen(PORT, () => console.log(`Server listening on port :${PORT}`));
