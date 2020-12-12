@@ -24,13 +24,13 @@ db.connect(err => {
     console.log('MongoDB Connection Failed!', err);
     process.exit(1);
   } else {
-    app.listen(PORT, () => console.log(`Server connected to MongoDB and listening on port :${PORT}`));
+    console.log('Connected to MongoDB');
   }
 });
 
 app.use(express.static('./build'));
 app.use(helmet());
-app.use(cors({ origin: process.env.CLIENT_URL }));
+app.use(cors());
 app.use(express.json());
 
 app.use('/api/auth', authController);
@@ -42,6 +42,8 @@ app.use('/api/shouts', shoutsController);
 app.use('/api/stats', statsController);
 app.use('/api/user', userController);
 
-app.get('/', (_, res) => {
+app.get('/', async (_, res) => {
   res.send('Use `/api/<endpoint>` to access API');
 });
+
+app.listen(PORT, () => console.log(`Server listening on port :${PORT}`));
