@@ -20,7 +20,12 @@ router.post('/login', async (req, res) => {
 
   const { email, password } = req.body;
   let login_res = await AuthService.login(email, password);
-  return res.status(login_res.status).json({ ...login_res.payload });
+  
+  if (login_res) {
+    return res.status(login_res.status).json({ ...login_res.payload });
+  } else {
+    return res.status(302).json({ message: 'Login to Turmoil Studios Account Failed!' });
+  }
 });
 
 router.post('/register', async (req, res) => {
