@@ -20,10 +20,10 @@ AuthService.login = async (email, password) => {
   let response = await axios.post(`${TS_API}/auth/login`, { email, password })
     .catch(err => err.response);
 
-  console.log('TS API RESPONSE:', respone);
+  console.log('TS API RESPONSE:', response);
   
   const { data } = response;
-  if (data.status_code === 200) {
+  if (data && data.status_code === 200) {
     if (!data.user.games.includes('SoT')) {
       let payload = { err: 'You do not own State of Turmoil!' };
       return Promise.resolve({ status: 403, payload });
