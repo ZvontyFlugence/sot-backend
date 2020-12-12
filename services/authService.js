@@ -3,7 +3,7 @@ import jwt from 'jsonwebtoken';
 import MemberService from './memberService';
 
 const secret = 'TS_SECRET';
-const TS_API = 'http://localhost:8080';
+const TS_API = process.env.TS_API || 'http://localhost:8080';
 let AuthService = {};
 
 AuthService.validate = async token => {
