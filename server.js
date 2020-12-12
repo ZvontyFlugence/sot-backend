@@ -42,17 +42,6 @@ app.use('/api/shouts', shoutsController);
 app.use('/api/stats', statsController);
 app.use('/api/user', userController);
 
-// app.get('/', (req, res) => {
-//   const index = ReactDOMServer.renderToString(<App />);
-
-//   fs.readFile(path.resolve('./build/index.html'), 'utf-8', (err, data) => {
-//     if (err) {
-//       console.log(err);
-//       return res.status(500).json({ err: 'Failed to read index.html' });
-//     }
-
-//     return res.send(
-//       data.replace('<div id="root"></div>', `<div id="root">${index}</div>`)
-//     );
-//   });
-// });
+app.get('/', (_, res) => {
+  res.send('Use `/api/<endpoint>` to access API');
+});
