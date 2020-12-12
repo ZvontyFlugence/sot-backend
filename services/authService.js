@@ -19,6 +19,8 @@ AuthService.validate = async token => {
 AuthService.login = async (email, password) => {
   let response = await axios.post(`${TS_API}/auth/login`, { email, password })
     .catch(err => err.response);
+
+  console.log('TS API RESPONSE:', respone);
   
   const { data } = response;
   if (data.status_code === 200) {
