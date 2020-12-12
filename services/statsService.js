@@ -64,6 +64,8 @@ const citizensGlobal = async () => {
 
 StatsService.getCountryStats = async body => {
   let countries = await CountryService.getCountries();
+
+  console.log('FETCHED COUNTRIES:', countries);
   
   if (!countries) {
     let payload = { error: 'Something Unexpected Happened' };
