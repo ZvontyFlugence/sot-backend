@@ -73,7 +73,6 @@ ShoutsService.sendReply = async data => {
 
 ShoutsService.getShout = async id => {
   const shouts = db.getDB().collection('shouts');
-  const users = db.getDB().collection('users');
   let payload = {};
 
   let shout = await shouts.findOne({ _id: id });

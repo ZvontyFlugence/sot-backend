@@ -2,6 +2,7 @@ import db from './dbService';
 import CompService from './compService';
 import CountryService from './countryService';
 import RegionService from './regionService';
+import NewsService from './newsService';
 import mongodb from 'mongodb';
 
 let MemberService = {};
@@ -11,6 +12,7 @@ const MemberActions = {
   CREATE_COMPANY: 'CREATE_COMPANY',
   CREATE_EXCHANGE_OFFER: 'CREATE_EXCHANGE_OFFER',
   CREATE_MESSAGE: 'CREATE_MESSAGE',
+  CREATE_NEWSPAPER: 'CREATE_NEWSPAPER',
   DELETE_ALERT: 'DELETE_ALERT',
   DELETE_MESSAGE: 'DELETE_MESSAGE',
   EXCHANGE_MONEY: 'EXCHANGE_MONEY',
@@ -43,7 +45,7 @@ MemberService.createUser = async data => {
   const user_doc = {
     _id: num_users + 1,
     account: data.email,
-    image: process.env.DEFAULT_USER_PIC,
+    image: process.env.DEFAULT_IMAGE,
     createdOn: new Date(Date.now()),
     description: '',
     level: 1,
@@ -111,6 +113,8 @@ MemberService.doAction = async (id, body) => {
       return await create_exchange_offer(id, body.mode, body.country, body.exchangeOffer);
     case MemberActions.CREATE_MESSAGE:
       return await create_message_thread(id, body.thread);
+    case MemberActions.CREATE_NEWSPAPER:
+      return await create_news(id, body.newsName);
     case MemberActions.DELETE_ALERT:
       return await delete_alert(id, body.alert);
     case MemberActions.DELETE_MESSAGE:
@@ -344,12 +348,11 @@ const create_company = async (id, data) => {
     let res = await users.findOneAndUpdate({ _id: id }, { $set: { gold } }, { new: true });
     
     if (res) {
-      console.log('RESULT SUCCESS:', result);
       return Promise.resolve(result);
     }
     return Promise.resolve({ status: 500, payload: { success: false, error: 'Something Unexpected Happened' } });
   }
-  console.log('RESULT FAIL:', result);
+
   return Promise.resolve(result);
 }
 
@@ -1054,6 +1057,35 @@ const exchange_money = async (id, { offerId, countryId, purchaseAmount }) => {
   // Return
   payload.success = true;
   return Promise.resolve({ status: 200, payload });
+}
+
+const create_news = async (id, newsName) => {
+  let users = db.getDB().collection('users');
+  let user = await users.findOne({ _id: id });
+  let payload = {};
+
+  if (!user) {
+    payload.error = 'User Not Found!';
+    return Promise.resolve({ status: 404, payload });
+  } else if (user.gold < 5.0) {
+    payload.error = 'Insufficient Funds!';
+    return Promise.resolve({ status: 400, payload });
+  }
+
+  let result = await NewsService.createNews({ name: newsName, author: id })
+    .catch(err => err);
+
+  if (result && result.payload.success) {
+    const gold = user.gold - 5.0;
+    const newspaper = result.payload.newsId;
+    let res = await users.findOneAndUpdate({ _id: id }, { $set: { gold, newspaper }});
+
+    if (res)
+      return Promise.resolve({ status: result.status, payload: result.payload });
+  }
+
+  payload = { success: false, error: 'Something Went Wrong!' };
+  return Promise.resolve({ status: 500, payload });
 }
 
 export default MemberService;

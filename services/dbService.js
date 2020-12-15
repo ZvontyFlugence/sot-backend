@@ -1,7 +1,7 @@
 import mongodb from 'mongodb';
 
 const MongoClient = mongodb.MongoClient;
-const dbName = 'SOT_DEV';
+const dbName = process.env.MONGO_URI ? 'SOT_DEV' : 'SOT_TEST';
 const mongoURI = process.env.MONGO_URI || 'mongodb://localhost:27017';
 const options = { useNewUrlParser: true, useUnifiedTopology: true };
 

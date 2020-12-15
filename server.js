@@ -1,15 +1,14 @@
 import express from 'express';
-// import fs from 'fs';
-// import path from 'path';
 import helmet from 'helmet';
 import cors from 'cors';
-// import React from 'react';
-// import ReactDOMServer from 'react-dom/server';
-// import App from '../src/App';
+import env from 'dotenv';
+env.config();
+
 import authController from './controllers/authController';
 import compController from './controllers/compController';
 import countryController from './controllers/countryController';
 import mapController from './controllers/mapController';
+import newsController from './controllers/newsController';
 import regionController from './controllers/regionController';
 import shoutsController from './controllers/shoutsController';
 import statsController from './controllers/statsController';
@@ -38,6 +37,7 @@ app.use('/api/auth', authController);
 app.use('/api/companies', compController);
 app.use('/api/countries', countryController);
 app.use('/api/map', mapController);
+app.use('/api/news', newsController);
 app.use('/api/regions', regionController);
 app.use('/api/shouts', shoutsController);
 app.use('/api/stats', statsController);

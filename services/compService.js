@@ -15,7 +15,7 @@ CompService.createCompany = async data => {
   let comp_doc = {
     _id: await companies.estimatedDocumentCount() + 1,
     name: data.name,
-    image: process.env.DEFAULT_COMP_PIC,
+    image: process.env.DEFAULT_IMAGE,
     type: data.type,
     ceo: data.ceo,
     location: data.location,
