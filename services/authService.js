@@ -22,8 +22,7 @@ AuthService.login = async (email, password) => {
   
   if (response && response.data) {
     const { data } = response;
-    console.log('TS DATA:', data)
-    if (data.status_code === 200) {
+    if (!data.error) {
       if (!data.user.games.includes('SoT')) {
         let payload = { err: 'You do not own State of Turmoil!' };
         return Promise.resolve({ status: 403, payload });
@@ -35,7 +34,7 @@ AuthService.login = async (email, password) => {
         return Promise.resolve({ status: 200, payload });
       }
     } else {
-      return Promise.resolve({ status: data.status_code, payload: { err: data.error } });
+      return Promise.resolve({ status: 400, payload: { err: data.error } });
     }
   } else {
     return Promise.resolve({ status: 500, payload: { err: 'Turmoil Studios Account Authentication failed' } })
