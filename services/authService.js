@@ -20,20 +20,25 @@ AuthService.login = async (email, password) => {
   let response = await axios.post(`${TS_API}/auth/login`, { email, password })
     .catch(err => err.response);
   
-  const { data } = response;
-  if (data && data.status_code === 200) {
-    if (!data.user.games.includes('SoT')) {
-      let payload = { err: 'You do not own State of Turmoil!' };
-      return Promise.resolve({ status: 403, payload });
+  if (response && response.data) {
+    const { data } = response;
+    console.log('TS DATA:', data)
+    if (data.status_code === 200) {
+      if (!data.user.games.includes('SoT')) {
+        let payload = { err: 'You do not own State of Turmoil!' };
+        return Promise.resolve({ status: 403, payload });
+      } else {
+        let account = data.user.email;
+        let user = await MemberService.getLinkedUser(account);
+        let token = await jwt.sign({ user_id: user._id }, secret, { expiresIn: '7d' });
+        let payload = { token, user };
+        return Promise.resolve({ status: 200, payload });
+      }
     } else {
-      let account = data.user.email;
-      let user = await MemberService.getLinkedUser(account);
-      let token = await jwt.sign({ user_id: user._id }, secret, { expiresIn: '7d' });
-      let payload = { token, user };
-      return Promise.resolve({ status: 200, payload });
+      return Promise.resolve({ status: data.status_code, payload: { err: data.error } });
     }
   } else {
-    return Promise.resolve({ status: data.status_code, payload: { err: data.error } });
+    return Promise.resolve({ status: 500, payload: { err: 'Turmoil Studios Account Authentication failed' } })
   }
 };
 
