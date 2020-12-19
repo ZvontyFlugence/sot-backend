@@ -4,6 +4,9 @@ import CountryService from './countryService';
 import RegionService from './regionService';
 import NewsService from './newsService';
 import mongodb from 'mongodb';
+import axios from 'axios';
+
+const TS_API = process.env.TS_API || 'http://localhost:8080/api';
 
 let MemberService = {};
 const MemberActions = {
@@ -19,6 +22,7 @@ const MemberActions = {
   FRIEND_REQUEST_RESPONSE: 'FRIEND_REQUEST_RESPONSE',
   HEAL: 'HEAL',
   LEVEL_UP: 'LEVEL_UP',
+  LIKE_ARTICLE: 'LIKE_ARTICLE',
   PURCHASE_ITEM: 'PURCHASE_ITEM',
   READ_ALERT: 'READ_ALERT',
   READ_MESSAGE: 'READ_MESSAGE',
@@ -27,6 +31,7 @@ const MemberActions = {
   SEND_MESSAGE: 'SEND_MESSAGE',
   SHOUT: 'SHOUT',
   SHOUT_REPLY: 'SHOUT_REPLY',
+  SUB_NEWSPAPER: 'SUB_NEWS',
   TRAIN: 'TRAIN',
   TRAVEL: 'TRAVEL',
   UPDATE_DESC: 'UPDATE_DESC',
@@ -34,47 +39,72 @@ const MemberActions = {
   WORK: 'WORK',
 };
 
-MemberService.createUser = async data => {
-  const users = db.getDB().collection('users');
-  const num_users = await users.estimatedDocumentCount();
+MemberService.createUser = async (regData) => {
+  const { email, password } = regData;
+  let response = await axios.post(`${TS_API}/auth/login`, { email, password })
+    .catch(err => err.response);
 
-  const country = await CountryService.getCountry(data.country);
-  const location = await RegionService.startingRegion(data.country);
+  if (response && response.data) {
+    const { data } = response;
+    if (!data.error) {
+      if (!data.user.games.includes('SoT')) {
+        let payload = { err: 'You do not own State of Turmoil!' };
+        return Promise.resolve({ status: 403, payload });
+      } else {
+        const users = db.getDB().collection('users');
+        const num_users = await users.estimatedDocumentCount();
 
-  // Build User Doc
-  const user_doc = {
-    _id: num_users + 1,
-    account: data.email,
-    image: process.env.DEFAULT_IMAGE,
-    createdOn: new Date(Date.now()),
-    description: '',
-    level: 1,
-    xp: 0,
-    health: 100,
-    country: data.country,
-    gold: 5.00,
-    strength: 0,
-    location: location._id,
-    job: 0,
-    party: 0,
-    unit: 0,
-    newspaper: 0,
-    canTrain: new Date(Date.now()),
-    canWork: new Date(Date.now()),
-    canCollectRewards: new Date(Date.now()),
-    canHeal: new Date(Date.now()),
-    wallet: [{ currency: country.currency, amount: 25.00 }],
-    inventory: [],
-    alerts: [],
-    messages: [],
-    pendingFriends: [],
-    friends: [],
-  };
+        const country = await CountryService.getCountry(regData.country);
+        const location = await RegionService.startingRegion(regData.country);
 
-  const res = await users.insertOne(user_doc);
-  let user = res.ops[0];
+        if (!country) {
+          return { error: 'Country Not Found' };
+        } else if (!location) {
+          return { error: 'Error selecting starter region' };
+        }
 
-  return user;
+        // Build User Doc
+        const user_doc = {
+          _id: num_users + 1,
+          account: data.user.email,
+          displayName: data.user.username,
+          image: process.env.DEFAULT_IMAGE || 'http://localhost:3000/default-comp.png',
+          createdOn: new Date(Date.now()),
+          description: '',
+          level: 1,
+          xp: 0,
+          health: 100,
+          country: regData.country,
+          gold: 5.00,
+          strength: 0,
+          location: location._id,
+          job: 0,
+          party: 0,
+          unit: 0,
+          newspaper: 0,
+          canTrain: new Date(Date.now()),
+          canWork: new Date(Date.now()),
+          canCollectRewards: new Date(Date.now()),
+          canHeal: new Date(Date.now()),
+          wallet: [{ currency: country.currency, amount: 25.00 }],
+          inventory: [],
+          alerts: [],
+          messages: [],
+          pendingFriends: [],
+          friends: [],
+        };
+
+        const res = await users.insertOne(user_doc);
+        let user = res.ops[0];
+
+        return { user };
+      }
+    } else {
+      return { error: 'Invalid Credentials' };
+    }
+  }
+
+  return null;
 };
 
 MemberService.getAllUsers = async () => {
@@ -125,6 +155,8 @@ MemberService.doAction = async (id, body) => {
       return await friend_request_response(id, body.response_data);
     case MemberActions.HEAL:
       return await heal(id);
+    case MemberActions.LIKE_ARTICLE:
+      return await like_article(id, body.newsId, body.articleId);
     case MemberActions.PURCHASE_ITEM:
       return await purchase_item(id, body.purchase);
     case MemberActions.READ_ALERT:
@@ -145,6 +177,8 @@ MemberService.doAction = async (id, body) => {
       return await shout(id, body.shout);
     case MemberActions.SHOUT_REPLY:
       return await reply_to_shout(id, body.reply);
+    case MemberActions.SUB_NEWSPAPER:
+      return await subscribe_to_newspaper(id, body.newsId);
     case MemberActions.UPDATE_DESC:
       return await update_desc(id, body.desc);
     case MemberActions.UPLOAD:
@@ -1086,6 +1120,69 @@ const create_news = async (id, newsName) => {
 
   payload = { success: false, error: 'Something Went Wrong!' };
   return Promise.resolve({ status: 500, payload });
+}
+
+const like_article = async (id, newsId, articleId) => {
+  const newspapers = db.getDB().collection('newspapers');
+  let payload = {};
+
+  let newspaper = await newspapers.findOne({ _id: newsId });
+
+  if (!newspaper) {
+    payload.error = 'Newspaper Not Found!';
+    return Promise.resolve({ status: 404, payload });
+  }
+
+  let article = newspaper.articles.find(art => art.id == articleId);
+
+  if (!article) {
+    payload.error = 'Article Not Found!';
+    return Promise.resolve({ status: 404, payload });
+  }
+
+  if (article.likes.includes(id)) {
+    payload.error = 'You have already liked the article!';
+    return Promise.resolve({ status: 400, payload });
+  } else {
+    article.likes.push(id);
+    let updates = { articles: [...newspaper.articles] };
+    let updated = await newspapers.updateOne({ _id: newsId }, { $set: updates });
+
+    if (!updated) {
+      payload.error = 'Failed to like article!';
+      return Promise.resolve({ status: 500, payload });
+    }
+
+    payload.success = true;
+    return Promise.resolve({ status: 200, payload });
+  }
+}
+
+const subscribe_to_newspaper = async (id, newsId) => {
+  const newspapers = db.getDB().collection('newspapers');
+  let payload = {};
+
+  let newspaper = await newspapers.findOne({ _id: newsId });
+
+  if (!newspaper) {
+    payload.error = 'Newspaper Not Found!';
+    return Promise.resolve({ status: 404, payload });
+  } else if (newspaper.subscribers.includes(id)) {
+    payload.error = 'You are already subscribed!';
+    return Promise.resolve({ status: 400, payload });
+  } else {
+    newspaper.subscribers.push(id);
+    let updates = { subscribers: [...newspaper.subscribers] };
+    let updated = await newspapers.updateOne({ _id: newsId }, { $set: updates });
+
+    if (!updated) {
+      payload.error = 'Failed to subscribe to newspaper!';
+      return Promise.resolve({ status: 500, payload });
+    }
+
+    payload.success = true;
+    return Promise.resolve({ status: 200, payload });
+  }
 }
 
 export default MemberService;

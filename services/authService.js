@@ -3,7 +3,7 @@ import jwt from 'jsonwebtoken';
 import MemberService from './memberService';
 
 const secret = 'TS_SECRET';
-const TS_API = process.env.TS_API || 'http://localhost:8080';
+const TS_API = process.env.TS_API || 'http://localhost:8080/api';
 let AuthService = {};
 
 AuthService.validate = async token => {
@@ -22,7 +22,7 @@ AuthService.login = async (email, password) => {
   
   if (response && response.data) {
     const { data } = response;
-    if (!data.error) {
+    if (!data.error && data.user) {
       if (!data.user.games.includes('SoT')) {
         let payload = { err: 'You do not own State of Turmoil!' };
         return Promise.resolve({ status: 403, payload });

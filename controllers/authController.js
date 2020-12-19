@@ -2,6 +2,7 @@ import express from 'express';
 import auth from '../middleware/auth';
 import db from '../services/dbService';
 import AuthService from '../services/authService';
+import MemberService from '../services/memberService';
 
 const router = express.Router();
 
@@ -28,13 +29,18 @@ router.post('/login', async (req, res) => {
   }
 });
 
+// Uses validates credentials to find valid TS Account
+// if found, creates SoT User Account
+// else, returns error
 router.post('/register', async (req, res) => {
-  let user = await MemberService.createUser(req.body);
+  let result = await MemberService.createUser(req.body);
 
-  if (user) {
+  if (result && result.error) {
+    return res.status(400).json({ error: result.error })
+  } else if (result && result.user) {
     return res.status(201).json({ created: true });
   } else {
-    return res.status(500).json({ err: 'Failed to Create User' });
+    return res.status(500).json({ error: 'Failed to Create User' });
   }
 });
 
