@@ -55,7 +55,6 @@ router.get('/wallet-info', auth, async (req, res) => {
   const regionOwner = await CountryService.getCountry(region.owner._id);
 
   let curr_cc = user.wallet.filter(cc => cc.currency === regionOwner.currency)[0];
-  //curr_cc.flag = regionOwner.flag_code;
 
   // TODO: Add flags for other countries (for Profile Page)
 

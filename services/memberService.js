@@ -18,14 +18,17 @@ const MemberActions = {
   CREATE_NEWSPAPER: 'CREATE_NEWSPAPER',
   DELETE_ALERT: 'DELETE_ALERT',
   DELETE_MESSAGE: 'DELETE_MESSAGE',
+  DONATE_MONEY: 'DONATE_MONEY',
   EXCHANGE_MONEY: 'EXCHANGE_MONEY',
   FRIEND_REQUEST_RESPONSE: 'FRIEND_REQUEST_RESPONSE',
+  GIFT_ITEMS: 'GIFT_ITEMS',
   HEAL: 'HEAL',
   LEVEL_UP: 'LEVEL_UP',
   LIKE_ARTICLE: 'LIKE_ARTICLE',
   PURCHASE_ITEM: 'PURCHASE_ITEM',
   READ_ALERT: 'READ_ALERT',
   READ_MESSAGE: 'READ_MESSAGE',
+  REMOVE_EXCHANGE_OFFER: 'REMOVE_EXCHANGE_OFFER',
   REMOVE_FRIEND: 'REMOVE_FRIEND',
   SEND_FRIEND_REQUEST: 'SEND_FRIEND_REQUEST',
   SEND_MESSAGE: 'SEND_MESSAGE',
@@ -34,6 +37,8 @@ const MemberActions = {
   SUB_NEWSPAPER: 'SUB_NEWS',
   TRAIN: 'TRAIN',
   TRAVEL: 'TRAVEL',
+  UNLIKE_ARTICLE: 'UNLIKE_ARTICLE',
+  UNSUB_NEWSPAPER: 'UNSUB_NEWS',
   UPDATE_DESC: 'UPDATE_DESC',
   UPLOAD: 'UPLOAD',
   WORK: 'WORK',
@@ -149,10 +154,14 @@ MemberService.doAction = async (id, body) => {
       return await delete_alert(id, body.alert);
     case MemberActions.DELETE_MESSAGE:
       return await delete_message_thread(id, body.threadId);
+    case MemberActions.DONATE_MONEY:
+      return await donate_money(id, body.recipientId, body.donations);
     case MemberActions.EXCHANGE_MONEY:
       return await exchange_money(id, body.data);
     case MemberActions.FRIEND_REQUEST_RESPONSE:
       return await friend_request_response(id, body.response_data);
+    case MemberActions.GIFT_ITEMS:
+      return await gift_items(id, body.recipientId, body.giftItems);
     case MemberActions.HEAL:
       return await heal(id);
     case MemberActions.LIKE_ARTICLE:
@@ -163,6 +172,8 @@ MemberService.doAction = async (id, body) => {
       return await read_alert(id, body.alert);
     case MemberActions.READ_MESSAGE:
       return await read_message_thread(id, body.threadId);
+    case MemberActions.REMOVE_EXCHANGE_OFFER:
+      return await remove_exchange_offer(id, body.country, body.offersToRemove);
     case MemberActions.REMOVE_FRIEND:
       return await remove_friend(id, body.friend_id);
     case MemberActions.TRAIN:
@@ -179,6 +190,10 @@ MemberService.doAction = async (id, body) => {
       return await reply_to_shout(id, body.reply);
     case MemberActions.SUB_NEWSPAPER:
       return await subscribe_to_newspaper(id, body.newsId);
+    case MemberActions.UNLIKE_ARTICLE:
+      return await unlike_article(id, body.newsId, body.articleId);
+    case MemberActions.UNSUB_NEWSPAPER:
+      return await unsubscribe_from_newspaper(id, body.newsId);
     case MemberActions.UPDATE_DESC:
       return await update_desc(id, body.desc);
     case MemberActions.UPLOAD:
@@ -1183,6 +1198,296 @@ const subscribe_to_newspaper = async (id, newsId) => {
     payload.success = true;
     return Promise.resolve({ status: 200, payload });
   }
+}
+
+const remove_exchange_offer = async (id, countryId, offersToRemove) => {
+  const users = db.getDB().collection('users');
+  const countries = db.getDB().collection('countries');
+  let user = await users.findOne({ _id: id });
+  let payload = {};
+  let updates = {};
+  let allRemoved = true;
+
+  if (!user) {
+    payload.error = 'User Not Found!';
+    return Promise.resolve({ status: 404, payload });
+  }
+
+  let country = await CountryService.getCountry(countryId);
+
+  if (!country) {
+    payload.error = 'Country Not Found!';
+    return Promise.resolve({ status: 404, payload });
+  }
+
+  for (let offerId of offersToRemove) {
+    // Get offer index
+    let index = country.exchangeOffers.findIndex(off => off.id == offerId);
+    if (index >= 0) {
+      // Get offer object
+      let exchangeOffer = country.exchangeOffers[index];
+      // Remove offer from market
+      country.exchangeOffers.splice(index, 1);
+      // Update country
+      updates.exchangeOffers = [...country.exchangeOffers];
+      let updatedCountry = await countries.findOneAndUpdate({ _id: countryId }, { $set: updates });
+
+      if (!updatedCountry) {
+        console.log('Country Not Updated');
+        allRemoved = false;
+        continue;
+      }
+
+      // Send finances back to user
+      if (exchangeOffer.mode === 0) {
+        user.gold += exchangeOffer.sellAmount;
+      } else {
+        let userCC = user.wallet.find(cc => cc.currency === country.currency);
+        if (userCC) {
+          userCC += exchangeOffer.sellAmount;
+        } else {
+          user.wallet.push({ currency: country.currency, amount: exchangeOffer.sellAmount });
+        }
+      }
+    } else {
+      console.log('Exchange Offer Not Found');
+      allRemoved = false;
+    }
+  }
+
+  // Update user
+  updates = { gold: user.gold, wallet: [...user.wallet] };
+  let updatedUser = await users.findOneAndUpdate({ _id: id }, { $set: updates });
+
+  if (!updatedUser) {
+    payload.error = 'Failed To Update User!';
+    return Promise.resolve({ status: 500, payload });
+  }
+
+  if (allRemoved) {
+    payload.success = true;
+    return Promise.resolve({ status: 200, payload });
+  }
+
+  payload.error = 'Not All Selected Offers Removed';
+  return Promise.resolve({ status: 500, payload });
+}
+
+const unlike_article = async (id, newsId, articleId) => {
+  const newspapers = db.getDB().collection('newspapers');
+  let newspaper = await newspapers.findOne({ _id: newsId });
+  let payload = {};
+
+  if (!newspaper) {
+    payload.error = 'Newspaper Not Found!';
+    return Promise.resolve({ status: 404, payload });
+  }
+
+  let article = newspaper.articles.find(art => art.id == articleId);
+
+  if (!article) {
+    payload.error = 'Article Not Found!';
+    return Promise.resolve({ status: 404, payload });
+  } else if (!article.likes.includes(id)) {
+    payload.error = 'You never liked the article!';
+    return Promise.resolve({ status: 400, payload });
+  } else {
+    let index = article.likes.findIndex(like => like === id);
+    article.likes.splice(index, 1);
+    let updates = { articles: [...newspaper.articles] };
+    let updated = await newspapers.findOneAndUpdate({ _id: newsId }, { $set: updates });
+
+    if (!updated) {
+      payload.error = 'Failed to unlike article!';
+      return Promise.resolve({ status: 500, payload });
+    }
+
+    payload.success = true;
+    return Promise.resolve({ status: 200, payload });
+  }
+}
+
+const unsubscribe_from_newspaper = async (id, newsId) => {
+  const newspapers = db.getDB().collection('newspapers');
+  let newspaper = await newspapers.findOne({ _id: newsId });
+  let payload = {};
+
+  if (!newspaper) {
+    payload.error = 'Newspaper Not Found!';
+    return Promise.resolve({ status: 404, payload });
+  } else if (!newspaper.subscribers.includes(id)) {
+    payload.error = 'You are not a subscriber!';
+    return Promise.resolve({ status: 400, payload });
+  } else {
+    let index = newspaper.subscribers.findIndex(sub => sub === id);
+    newspaper.subscribers.splice(index, 1);
+    let updates = { subscribers: [...newspaper.subscribers] };
+    let updated = await newspapers.findOneAndUpdate({ _id: newsId }, { $set: updates });
+
+    if (!updated) {
+      payload.error = 'Failed to Unsubscribe from Newspaper!';
+      return Promise.resolve({ status: 500, payload });
+    }
+
+    payload.success = true;
+    return Promise.resolve({ status: 200, payload });
+  }
+}
+
+const donate_money = async (id, recipientId, donations) => {
+  const users = db.getDB().collection('users');
+  let user = await users.findOne({ _id: id });
+  let allDonated = true;
+  let updates = {};
+  let payload = {};
+
+  if (!user) {
+    payload.error = 'User Not Found!';
+    return Promise.resolve({ status: 404, payload });
+  }
+
+  let recipient = await users.findOne({ _id: recipientId });
+
+  if (!recipient) {
+    payload.error = 'Recipient Not Found!';
+    return Promise.resolve({ status: 404, payload });
+  }
+
+  for (let donation of donations) {
+    if (donation.currency === 'Gold') {
+      if (user.gold < donation.amount) {
+        allDonated = false;
+        continue;
+      }
+
+      user.gold -= donation.amount;
+      recipient.gold += donation.amount;
+    } else {
+      let userCC = user.wallet.find(cc => cc.currency === donation.currency);
+
+      if (!userCC || userCC.amount < donation.amount) {
+        allDonated = false;
+        continue;
+      }
+
+      userCC.amount -= donation.amount;
+      let recipientCC = recipient.wallet.find(cc => cc.currency === donation.currency);
+
+      if (!recipientCC) {
+        recipient.wallet.push({ currency: donation.currency, amount: donation.amount });
+      } else {
+        recipientCC.amount += donation.amount;
+      }
+    }
+  }
+
+  // Update recipient
+  let alert = {
+    read: false,
+    type: 'RECEIVED_DONATION',
+    message: `You have received a donation from ${user.displayName}`,
+    timestamp: new Date(Date.now()),
+  };
+  updates = { alerts: [...recipient.alerts, alert], gold: recipient.gold, wallet: [...recipient.wallet] };
+  let updated = await users.findOneAndUpdate({ _id: recipient._id }, { $set: updates });
+
+  if (!updated) {
+    payload.error = 'Failed to update Recipient!';
+    return Promise.resolve({ status: 500, payload });
+  }
+
+  // Update User
+  updates = { gold: user.gold, wallet: [...user.wallet] };
+  updated = await users.findOneAndUpdate({ _id: id }, { $set: updates });
+
+  if (!updated) {
+    payload.error = 'Failed to Update User';
+    return Promise.resolve({ status: 500, payload });
+  } else if (!allDonated) {
+    payload.error = 'Not All Donations Made!';
+    payload.errorDetail = 'Insufficient funds for one or more donations';
+    return Promise.resolve({ status: 400, payload });
+  }
+
+  payload.success = true;
+  return Promise.resolve({ status: 200, payload });
+}
+
+const gift_items = async (id, recipientId, giftItems) => {
+  const users = db.getDB().collection('users');
+  let user = await users.findOne({ _id: id });
+  let allGifted = true;
+  let updates = {};
+  let payload = {};
+
+  if (!user) {
+    payload.error = 'User Not Found!';
+    return Promise.resolve({ status: 404, payload });
+  }
+
+  let recipient = await users.findOne({ _id: recipientId });
+  if (!recipient) {
+    payload.error = 'Recipient Not Found!';
+    return Promise.resolve({ satus: 404, payload });
+  }
+
+  for (let gift of giftItems) {
+    let giftIndex = user.inventory.findIndex(item => item.id === gift.id);
+
+    if (giftIndex === -1) {
+      allGifted = false;
+      continue;
+    }
+
+    // Remove item from Sender
+    let giftItem = user.inventory.splice(index, 1);
+    if (giftItem.quantity < gift.quantity) {
+      allGifted = false;
+      continue;
+    } else if (giftItem.quantity > gift.quantity) {
+      giftItem.quantity -= gift.quantity;
+      user.inventory.push(giftItem.quantity);
+    }
+
+    // Add item to recipient
+    giftIndex = recipient.inventory.findIndex(item => item.id === gift.id);
+    if (giftIndex === -1) {
+      recipient.inventory.push({ id: gift.id, quantity: gift.quantity });
+    } else {
+      recipient.inventory[giftIndex].quantity += gift.quantity;
+    }
+  }
+
+  // Update recipient
+  let alert = {
+    read: false,
+    type: 'RECEIVED_GIFT',
+    message: `You have received a gift from ${user.displayName}`,
+    timestamp: new Date(Date.now()),
+  };
+  updates = { alerts: [...recipient.alerts, alert], inventory: [...recipient.inventory] };
+  let updated = await users.findOneAndUpdate({ _id: recipientId }, { $set: updates });
+
+  if (!updated) {
+    payload.error = 'Failed to Update Recipient!';
+    return Promise.resolve({ status: 500, payload });
+  }
+
+  // Update sender
+  updates = { inventory: [...user.inventory] };
+  updated = await users.findOneAndUpdate({ _id: id }, { $set: updates });
+
+  if (!updated) {
+    payload.error = 'Failed to Update User!';
+    return Promise.resolve({ status: 500, payload });
+  } else if (!allGifted) {
+    payload.error = 'Not All Gifts Made!';
+    payload.errorDetail = 'Insufficient quantity of items to complete one or more gifts';
+    return Promise.resolve({ status: 400, payload });
+  }
+
+  payload.success = true;
+  return Promise.resolve({ status: 200, payload });
 }
 
 export default MemberService;

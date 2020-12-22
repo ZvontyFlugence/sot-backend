@@ -4,6 +4,8 @@ const CompService = {};
 
 const CompActions = {
   CREATE_JOB_OFFER: 'CREATE_JOB_OFFER',
+  EDIT_EMPLOYEE: 'EDIT_EMPLOYEE',
+  FIRE_EMPLOYEE: 'FIRE_EMPLOYEE',
   SELL_PRODUCT: 'SELL_PRODUCT',
   UNLIST_JOB: 'UNLIST_JOB',
   UNLIST_PRODUCT: 'UNLIST_PRODUCT',
@@ -104,6 +106,10 @@ CompService.doAction = async (id, body) => {
   switch (body.action.toUpperCase()) {
     case CompActions.CREATE_JOB_OFFER:
       return await create_job(id, body.jobOffer);
+    case CompActions.EDIT_EMPLOYEE:
+      return await edit_employee(id, body.employeeData);
+    case CompActions.FIRE_EMPLOYEE:
+      return await fire_employee(id, employeeId);
     case CompActions.SELL_PRODUCT:
       return await sell_product(id, body.productOffer);
     case CompActions.UNLIST_JOB:
@@ -237,6 +243,127 @@ const unlist_job = async (id, offer) => {
   }
 
   return Promise.resolve({ status: 500, payload });
+}
+
+const edit_employee = async (id, employeeData) => {
+  const companies = db.getDB().collection('companies');
+  const users = db.getDB().collection('users');
+  let company = await companies.findOne({ _id: id });
+  let payload = {};
+  let updates = {};
+
+  if (!company) {
+    payload.error = 'Company Not Found!';
+    return Promise.resolve({ status: 404, payload });
+  }
+
+  let user = await users.findOne({ _id: employeeData.userId });
+
+  if (!user) {
+    payload.error = 'User Not Found!';
+    return Promise.resolve({ status: 404, payload });
+  }
+
+  let employee = company.employees.find(emp => emp.userId === employeeData.userId);
+
+  if (!employee) {
+    payload.error = 'User is not an Employee!';
+    return Promise.resolve({ status: 400, payload });
+  }
+
+  if (employeeData.hasOwnProperty('title')) {
+    employee.title = employeeData.title;
+    user.alerts.push({
+      read: false,
+      type: 'JOB_TITLE_CHANGED',
+      message: `Your employer changed your title to: ${employeeData.title}`,
+      timestamp: new Date(Date.now()),
+    });
+  }
+  
+  if (employeeData.hasOwnProperty('wage')) {
+    employee.wage = employeeData.wage;
+    user.alerts.push({
+      read: false,
+      type: 'JOB_WAGE_CHANGED',
+      message: `Your employer changed your wage to: ${employeeData.wage.toFixed(2)} ${company.funds.currency}`,
+      timestamp: new Date(Date.now()),
+    });
+  }
+
+  updates = { employees: [...company.employees] };
+  let updated = await companies.findOneAndUpdate({ _id: id }, { $set: updates });
+
+  if (!updated) {
+    payload.error = 'Failed to update Employee';
+    return Promise.resolve({ status: 500, payload });
+  }
+
+  // Update user to notify job details change
+  updates = { alerts: [...user.alerts] };
+  updated = await users.findOneAndUpdate({ _id: user._id }, { $set: updates });
+  
+  if (!updated) {
+    payload.error = 'Failed to notify Employee!';
+    return Promise.resolve({ status: 500, payload });
+  }
+
+  payload.success = true;
+  return Promise.resolve({ status: 200, payload });
+}
+
+const fire_employee = async (id, employeeId) => {
+  const companies = db.getDB().collection('companies');
+  const users = db.getDB().collection('users');
+  let company = await companies.findOne({ _id: id });
+  let payload = {};
+  let updates = {};
+
+  if (!company) {
+    payload.error = 'Company Not Found!';
+    return Promise.resolve({ status: 404, payload });
+  }
+
+  let user = await users.findOne({ _id: employeeId });
+
+  if (!user) {
+    payload.error = 'User Not Found!';
+    return Promise.resolve({ status: 404, payload });
+  }
+
+  let index = company.employees.findIndex(emp => emp.userId === employeeId);
+
+  if (index === -1) {
+    payload.error = 'User is not an Employee!';
+    return Promise.resolve({ status: 400, payload });
+  }
+
+  company.employees.splice(index, 1);
+  updates = { employees: [...company.employees] };
+  let updated = await company.findOneAndUpdate({ _id: id }, { $set: updates });
+  
+  if (!updated) {
+    payload.error = 'Failed to Fire Employee';
+    return Promise.resolve({ status: 500, payload });
+  }
+
+  // Alert User of Firing
+  user.alerts.push({
+    read: false,
+    type: 'JOB_TERMINATED',
+    message: `You have been fired from your job at ${company.name}`,
+    timestamp: new Date(Date.now()),
+  });
+  updates = { alerts: [...user.alerts] };
+  updated = await users.findOneAndUpdate({ _id: employeeId }, { $set: updates });
+
+  if (!updated) {
+    payload.error = 'Failed to notify Employee of Firing!';
+    return Promise.resolve({ status: 500, payload });
+  }
+
+  payload.success = true;
+  return Promise.resolve({ status: 200, payload });
 }
 
 export default CompService;
