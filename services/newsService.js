@@ -1,5 +1,5 @@
 import db from './dbService';
-import mongodb from 'mongodb';
+import ArticleService from './articleService';
 
 const NewsService = {};
 const NewsActions = {
@@ -32,11 +32,24 @@ NewsService.getNewspaper = async id => {
   let newspapers = db.getDB().collection('newspapers');
   let newspaper = await newspapers.findOne({ _id: id });
 
-  if (newspaper) {
-    return Promise.resolve({ status: 200, payload: { news: newspaper } });
+  if (!newspaper) {
+    return Promise.resolve({ status: 404 , payload: { error: 'Newspaper Not Found!' } });    
   }
 
-  return Promise.resolve({ status: 404 , payload: { error: 'Newspaper Not Found!' } });
+  let articles = [];
+  for (let articleId of newspaper.articles) {
+    let article = await ArticleService.getArticle(articleId);
+    articles.push(article);
+  }
+
+  newspaper.articles = articles;
+
+  return Promise.resolve({ status: 200, payload: { news: newspaper } });
+}
+
+NewsService.getNewspapers = async () => {
+  const newspapers = db.getDB().collection('newspapers');
+  return await newspapers.find({}).toArray();
 }
 
 NewsService.getCountryNewspapers = async countryId => {
@@ -71,36 +84,34 @@ NewsService.getArticle = async (newsId, articleId) => {
     return Promise.resolve({ status: 404, payload });
   }
 
-  let article = newspaper.articles.find(art => art.id == articleId);
+  let articleIndex = newspaper.articles.findIndex(art => `${art}` == articleId);
+  if (articleIndex === -1) {
+    payload.error = 'Article Not Found!';
+    return Promise.resolve({ status: 404, payload });
+  }
+
+  let article = await ArticleService.getArticle(articleId)
 
   if (article) {
-    payload = { success: true, article };
+    payload = { success: true, article, newspaper };
     return Promise.resolve({ status: 200, payload });
   }
 
-  payload.error = 'Article Not Found!';
+  payload.error = 'Something Went Wrong!';
   return Promise.resolve({ status: 404, payload });
 }
 
-// TODO: Speed up by moving articles to their own collection and
-// keep a reference to its publisher (newspaper)
 NewsService.getCountryArticles = async countryId => {
-  let newspapers = await NewsService.getCountryNewspapers(countryId);
-  let articles = [];
+  let articles = await ArticleService.getCountryArticles(countryId);
 
-  for (let i = 0; i < newspapers.length; i++) {
-    if (newspapers[i] === null)
-      continue;
-
-    for (let article of newspapers[i].articles) {
-      if (!article.published)
-        continue;
-        
-      article.publisher = { ...newspapers[i], articles: undefined };
-      articles.push(article);
+  for (let i = 0; i < articles.length; i++) {
+    let result = await NewsService.getNewspaper(articles[i].publisher);
+    if (result.payload.news) {
+      let publisher = result.payload.news;
+      articles[i].publisher = { ...publisher, articles: undefined };
     }
   }
-
+ 
   articles.sort((a, b) => b.likes - a.likes);
 
   return articles;
@@ -130,29 +141,24 @@ const publish_article = async (id, article) => {
     return Promise.resolve({ status: 404, payload });
   }
 
-  let article_doc = {
-    ...article,
-    likes: [],
-    comments: [],
-  };
+  let articleId = await ArticleService.publishArticle(id, article);
 
-  let articles = [];
-  if (!article_doc.id) {
-    article_doc.id = new mongodb.ObjectId();
-    articles = [...newspaper.articles, article_doc];
-  } else {
-    let articleIdx = newspaper.articles.findIndex(art => art.id == article_doc.id);
-    article_doc.id = mongodb.ObjectId(article_doc.id);
-    newspaper.articles[articleIdx] = article_doc;
-    articles = [...newspaper.articles];
+  if (!articleId) {
+    payload.error = 'Article Not Published!';
+    return Promise.resolve({ status: 400, payload });
   }
 
-  
-  let updated = await newspapers.findOneAndUpdate({ _id: id }, { $set: { articles } }, { new: true });
+  if (!newspaper.articles.includes(articleId)) {
+    let articles = [...newspaper.articles, articleId];
+    let updated = await newspapers.findOneAndUpdate({ _id: id }, { $set: { articles } }, { new: true });
 
-  if (updated) {
-    payload = { success: true, articleId: article_doc.id };
-    return Promise.resolve({ status: 201, payload });
+    if (updated) {
+      payload = { success: true, articleId };
+      return Promise.resolve({ status: 201, payload });
+    }
+  } else {
+    payload = { success: true, articleId };
+    return Promise.resolve({ status: 200, payload });
   }
 
   payload.error = 'Something Went Wrong!';
@@ -169,14 +175,15 @@ const save_article = async (id, article) => {
     return Promise.resolve({ status: 404, payload });
   }
 
-  let articleId = new mongodb.ObjectID();
-  let article_doc = {
-    ...article,
-    id: articleId,
-  };
+  let articleId = await ArticleService.saveArticle(id, article);
 
-  let articles = [...newspaper.articles, article_doc];
-  let updated = await newspapers.findOneAndUpdate({ _id: id }, { $set: { articles } }, { new: true });
+  if (!articleId) {
+    payload.error = 'Article Not Saved!';
+    return Promise.resolve({ status: 400, payload });
+  }
+
+  let articles = [...newspaper.articles, articleId];
+  let updated = await newspapers.findOneAndUpdate({ _id: id }, { $set: { articles } });
 
   if (updated) {
     payload = { success: true, articleId };
@@ -197,20 +204,7 @@ const edit_article = async (id, article) => {
     return Promise.resolve({ status: 404, payload });
   }
 
-  // Find matching article index
-  let articleIdx = newspaper.articles.findIndex(art => art.id == article.id);
-
-  if (articleIdx === -1) {
-    payload.error = 'Article Not Found!';
-    return Promise.resolve({ status: 404, payload });
-  }
-
-  // Replace article
-  newspaper.articles[articleIdx] = article;
-
-  // Update Newspaper
-  let updates = { articles: [...newspaper.articles] };
-  let updated = await newspapers.findOneAndUpdate({ _id: id }, { $set: updates });
+  let updated = await ArticleService.editArticle(article);
 
   if (updated) {
     payload = { success: true };

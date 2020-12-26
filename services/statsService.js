@@ -1,5 +1,7 @@
 import MemberService from './memberService';
 import CountryService from './countryService';
+import PartyService from './partyService';
+import NewsService from './newsService';
 
 const StatsService = {};
 
@@ -88,6 +90,66 @@ StatsService.getCountryStats = async body => {
   }
 
   return Promise.resolve({ status: 200, payload: { countries } });
+}
+
+StatsService.getPartyStats = async body => {
+  let parties = null;
+
+  if (body.country && body.country !== 'global') {
+    parties = await CountryService.getParties(body.country);
+    let country = await CountryService.getCountry(body.country);
+
+    parties.forEach(party => {
+      party.country = country;
+    });
+  } else {
+    parties = await PartyService.getParties();
+
+    for (let i = 0; i < parties.length; i++) {
+      let country = await CountryService.getCountry(parties[i].country);
+      parties[i].country = country;
+    }
+  }
+
+  if (!parties) {
+    let payload = { error: 'Something Unexpected Happened' };
+    return Promise.resolve({ status: 500, payload });
+  }
+
+  parties.sort((a, b) => b.members.length - a.members.length);
+
+  return Promise.resolve({ status: 200, payload: { parties } });
+}
+
+StatsService.getNewspaperStats = async body => {
+  let newspapers = null;
+
+  if (body.country && body.country !== 'global') {
+    newspapers = await NewsService.getCountryNewspapers(body.country);
+    let country = await CountryService.getCountry(body.country);
+    newspapers.forEach(newspaper => {
+      newspaper.country = country;
+    });
+  } else {
+    newspapers = await NewsService.getNewspapers();
+
+    for (let i = 0; i < newspapers.length; i++) {
+      let author = await MemberService.getUser(newspapers[i].author);
+      if (author) {
+        let country = await CountryService.getCountry(author.country);
+        newspapers[i].country = country;
+      }
+    }
+  }
+
+  if (!newspapers) {
+    let payload = { error: 'Something Unexpected Happened' };
+    return Promise.resolve({ status: 500, payload });
+  }
+
+  newspapers.sort((a, b) => b.subscribers.length - a.subscribers.length);
+
+  return Promise.resolve({ status: 200, payload: { newspapers } });
 }
 
 export default StatsService;

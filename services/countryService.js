@@ -31,6 +31,27 @@ CountryService.getPopulation = async id => {
   return Promise.resolve(0);
 };
 
+CountryService.getAverageLevel = async id => {
+  let citizens = await CountryService.getCitizens(id);
+  let levelSum = citizens.reduce((accum, citizen) => accum + citizen.level, 0);
+  return citizens.length > 0 ? Math.round(levelSum / citizens.length) : 0;
+}
+
+CountryService.getNumNewCitizens = async id => {
+  let citizens = await CountryService.getCitizens(id);
+  let today = new Date(Date.now());
+  let newCitizens = citizens.filter(citizen => {
+    let born = new Date(citizen.createdOn);
+    let bornToday = (born.getUTCDate() === today.getUTCDate()) &&
+      (born.getUTCMonth() === today.getUTCMonth()) &&
+      (born.getUTCFullYear() === today.getUTCFullYear());
+
+    return bornToday;
+  });
+
+  return newCitizens.length;
+}
+
 CountryService.getJobs = async id => {
   let regions = await db.getDB().collection('regions').find({ owner: id }).toArray();
   let companies = [];
@@ -83,6 +104,26 @@ CountryService.getGoods = async id => {
   });
 
   return Promise.resolve(productOffers);
+}
+
+CountryService.getRegions = async id => {
+  const regions = db.getDB().collection('regions');
+  let owned_regions = await regions.find({ owner: id }).toArray();
+  owned_regions.sort((a, b) => {
+    if (a.name < b.name) {
+      return -1;
+    } else if (a.name > b.name) {
+      return 1;
+    } else {
+      return 0;
+    }
+  });
+  return owned_regions;
+}
+
+CountryService.getParties = async id => {
+  let parties = db.getDB().collection('parties');
+  return await parties.find({ country: id }).toArray();
 }
 
 export default CountryService;

@@ -40,7 +40,7 @@ router.delete('/:id', auth, async (req, res) => {
   return res.status(result.status).json(result.payload);
 });
 
-router.post('/:id/action', auth, async (req, res) => {
+router.patch('/:id/action', auth, async (req, res) => {
   const compId = Number.parseInt(req.params.id);
   let result = await CompService.doAction(compId, req.body);
 

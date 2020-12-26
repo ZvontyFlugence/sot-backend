@@ -9,3 +9,6 @@ require('@babel/register')({
 });
  
 require('./server');
+
+// Run Task Schedulers
+require('./schedulers/electionScheduler');

@@ -5,6 +5,8 @@ import RegionService from './regionService';
 import NewsService from './newsService';
 import mongodb from 'mongodb';
 import axios from 'axios';
+import ArticleService from './articleService';
+import PartyService from './partyService';
 
 const TS_API = process.env.TS_API || 'http://localhost:8080/api';
 
@@ -16,13 +18,18 @@ const MemberActions = {
   CREATE_EXCHANGE_OFFER: 'CREATE_EXCHANGE_OFFER',
   CREATE_MESSAGE: 'CREATE_MESSAGE',
   CREATE_NEWSPAPER: 'CREATE_NEWSPAPER',
+  CREATE_PARTY: 'CREATE_PARTY',
   DELETE_ALERT: 'DELETE_ALERT',
   DELETE_MESSAGE: 'DELETE_MESSAGE',
+  DEPOSIT_ITEMS: 'DEPOSIT_ITEMS',
+  DEPOSIT_MONEY: 'DEPOSIT_MONEY',
   DONATE_MONEY: 'DONATE_MONEY',
   EXCHANGE_MONEY: 'EXCHANGE_MONEY',
   FRIEND_REQUEST_RESPONSE: 'FRIEND_REQUEST_RESPONSE',
   GIFT_ITEMS: 'GIFT_ITEMS',
   HEAL: 'HEAL',
+  JOIN_PARTY: 'JOIN_PARTY',
+  LEAVE_PARTY: 'LEAVE_PARTY',
   LEVEL_UP: 'LEVEL_UP',
   LIKE_ARTICLE: 'LIKE_ARTICLE',
   PURCHASE_ITEM: 'PURCHASE_ITEM',
@@ -41,6 +48,8 @@ const MemberActions = {
   UNSUB_NEWSPAPER: 'UNSUB_NEWS',
   UPDATE_DESC: 'UPDATE_DESC',
   UPLOAD: 'UPLOAD',
+  WITHDRAW_ITEMS: 'WITHDRAW_ITEMS',
+  WITHDRAW_MONEY: 'WITHDRAW_MONEY',
   WORK: 'WORK',
 };
 
@@ -150,10 +159,16 @@ MemberService.doAction = async (id, body) => {
       return await create_message_thread(id, body.thread);
     case MemberActions.CREATE_NEWSPAPER:
       return await create_news(id, body.newsName);
+    case MemberActions.CREATE_PARTY:
+      return await create_party(id, body.party);
     case MemberActions.DELETE_ALERT:
       return await delete_alert(id, body.alert);
     case MemberActions.DELETE_MESSAGE:
       return await delete_message_thread(id, body.threadId);
+    case MemberActions.DEPOSIT_ITEMS:
+      return await deposit_items(id, body.compId, body.giftItems);
+    case MemberActions.DEPOSIT_MONEY:
+      return await deposit_money(id, body.compId, body.donations);
     case MemberActions.DONATE_MONEY:
       return await donate_money(id, body.recipientId, body.donations);
     case MemberActions.EXCHANGE_MONEY:
@@ -164,8 +179,12 @@ MemberService.doAction = async (id, body) => {
       return await gift_items(id, body.recipientId, body.giftItems);
     case MemberActions.HEAL:
       return await heal(id);
+    case MemberActions.JOIN_PARTY:
+      return await join_party(id, body.partyId);
+    case MemberActions.LEAVE_PARTY:
+      return await leave_party(id, body.partyId);
     case MemberActions.LIKE_ARTICLE:
-      return await like_article(id, body.newsId, body.articleId);
+      return await like_article(id, body.articleId);
     case MemberActions.PURCHASE_ITEM:
       return await purchase_item(id, body.purchase);
     case MemberActions.READ_ALERT:
@@ -191,13 +210,17 @@ MemberService.doAction = async (id, body) => {
     case MemberActions.SUB_NEWSPAPER:
       return await subscribe_to_newspaper(id, body.newsId);
     case MemberActions.UNLIKE_ARTICLE:
-      return await unlike_article(id, body.newsId, body.articleId);
+      return await unlike_article(id, body.articleId);
     case MemberActions.UNSUB_NEWSPAPER:
       return await unsubscribe_from_newspaper(id, body.newsId);
     case MemberActions.UPDATE_DESC:
       return await update_desc(id, body.desc);
     case MemberActions.UPLOAD:
       return await upload(id, body.image);
+    case MemberActions.WITHDRAW_ITEMS:
+      return await withdraw_items(id, body.compId, body.giftItems);
+    case MemberActions.WITHDRAW_MONEY:
+      return await withdraw_money(id, body.compId, body.donations);
     case MemberActions.WORK:
       return await work(id);
     default:
@@ -226,7 +249,7 @@ const train = async id => {
     strength: user.strength + 1,
     xp: user.xp + 1,
     health: user.health - 10,
-    canTrain: new Date(new Date().setHours(24, 0, 0, 0)),
+    canTrain: new Date(new Date().setUTCHours(24, 0, 0, 0)),
   };
 
   if (updates.xp >= neededXP(user.level)) {
@@ -259,7 +282,7 @@ const heal = async id => {
     return Promise.resolve({ status: 400, payload });
   }
 
-  const canHeal = new Date(new Date().setHours(24, 0, 0, 0));
+  const canHeal = new Date(new Date().setUTCHours(24, 0, 0, 0));
   let updates = { health: Math.min(user.health + 50, 100), canHeal };
   const updated_user = await users.findOneAndUpdate({ _id: user._id }, { $set: updates }, { new: true });
 
@@ -1137,18 +1160,11 @@ const create_news = async (id, newsName) => {
   return Promise.resolve({ status: 500, payload });
 }
 
-const like_article = async (id, newsId, articleId) => {
-  const newspapers = db.getDB().collection('newspapers');
+const like_article = async (id, articleId) => {
+  const articles = db.getDB().collection('articles');
   let payload = {};
 
-  let newspaper = await newspapers.findOne({ _id: newsId });
-
-  if (!newspaper) {
-    payload.error = 'Newspaper Not Found!';
-    return Promise.resolve({ status: 404, payload });
-  }
-
-  let article = newspaper.articles.find(art => art.id == articleId);
+  let article = await ArticleService.getArticle(articleId);
 
   if (!article) {
     payload.error = 'Article Not Found!';
@@ -1159,9 +1175,8 @@ const like_article = async (id, newsId, articleId) => {
     payload.error = 'You have already liked the article!';
     return Promise.resolve({ status: 400, payload });
   } else {
-    article.likes.push(id);
-    let updates = { articles: [...newspaper.articles] };
-    let updated = await newspapers.updateOne({ _id: newsId }, { $set: updates });
+    let updates = { likes: [...article.likes, id] };
+    let updated = await articles.updateOne({ _id: new mongodb.ObjectId(articleId) }, { $set: updates });
 
     if (!updated) {
       payload.error = 'Failed to like article!';
@@ -1273,17 +1288,11 @@ const remove_exchange_offer = async (id, countryId, offersToRemove) => {
   return Promise.resolve({ status: 500, payload });
 }
 
-const unlike_article = async (id, newsId, articleId) => {
-  const newspapers = db.getDB().collection('newspapers');
-  let newspaper = await newspapers.findOne({ _id: newsId });
+const unlike_article = async (id, articleId) => {
+  const articles = db.getDB().collection('articles');
   let payload = {};
 
-  if (!newspaper) {
-    payload.error = 'Newspaper Not Found!';
-    return Promise.resolve({ status: 404, payload });
-  }
-
-  let article = newspaper.articles.find(art => art.id == articleId);
+  let article = await ArticleService.getArticle(articleId);
 
   if (!article) {
     payload.error = 'Article Not Found!';
@@ -1294,8 +1303,8 @@ const unlike_article = async (id, newsId, articleId) => {
   } else {
     let index = article.likes.findIndex(like => like === id);
     article.likes.splice(index, 1);
-    let updates = { articles: [...newspaper.articles] };
-    let updated = await newspapers.findOneAndUpdate({ _id: newsId }, { $set: updates });
+    let updates = { likes: [...article.likes] };
+    let updated = await articles.findOneAndUpdate({ _id: new mongodb.ObjectId(articleId) }, { $set: updates });
 
     if (!updated) {
       payload.error = 'Failed to unlike article!';
@@ -1488,6 +1497,389 @@ const gift_items = async (id, recipientId, giftItems) => {
 
   payload.success = true;
   return Promise.resolve({ status: 200, payload });
+}
+
+const deposit_items = async (id, compId, giftItems) => {
+  const users = db.getDB().collection('users');
+  const companies = db.getDB().collection('companies');
+  let user = await users.findOne({ _id: id });
+  let allDeposited = true;
+  let updates = {};
+  let payload = {};
+
+  if (!user) {
+    payload.error = 'User Not Found!';
+    return Promise.resolve({ status: 404, payload });
+  }
+
+  let company = await CompService.getCompany(compId);
+
+  if (!company) {
+    payload.error = 'Company Not Found!';
+    return Promise.resolve({ status: 404, payload });
+  }
+
+  for (let gift of giftItems) {
+    let giftIndex = user.inventory.findIndex(item => item.id === gift.id);
+
+    if (giftIndex === -1) {
+      allDeposited = false;
+      continue;
+    }
+
+    // Remove item from Sender
+    let giftItem = user.inventory.splice(giftIndex, 1);
+    if (giftItem.quantity < gift.quantity) {
+      allGifted = false;
+      continue;
+    } else if (giftItem.quantity > gift.quantity) {
+      giftItem.quantity -= gift.quantity;
+      user.inventory.push(giftItem);
+    }
+
+    giftIndex = company.inventory.findIndex(item => item.id === gift.id);
+    if (giftIndex === -1) {
+      company.inventory.push({ id: gift.id, quantity: gift.quantity });
+    } else {
+      company.inventory[giftIndex].quantity += gift.quantity;
+    }
+  }
+
+  // Update Company
+  updates = { inventory: [...company.inventory] };
+  let updated = await companies.findOneAndUpdate({ _id: compId }, { $set: updates });
+
+  if (!updated) {
+    payload.error = 'Failed to Update Company!';
+    return Promise.resolve({ status: 500, payload });
+  }
+
+  // Update Sender
+  updates = { inventory: [...user.inventory] };
+  updated = await users.findOneAndUpdate({ _id: id }, { $set: updates });
+
+  if (!updated) {
+    payload.error = 'Failed to Update User!';
+    return Promise.resolve({ status: 500, payload });
+  } else if (!allDeposited) {
+    payload.error = 'Not All Items Deposited!';
+    payload.errorDetail = 'Insufficient quantity of items to complete one or more deposits';
+    return Promise.resolve({ status: 400, payload });
+  }
+
+  payload.success = true;
+  return Promise.resolve({ status: 200, payload });
+}
+
+const deposit_money = async (id, compId, donations) => {
+  const users = db.getDB().collection('users');
+  const companies = db.getDB().collection('companies');
+  let user = await users.findOne({ _id: id });
+  let allDonated = true;
+  let updates = {};
+  let payload = {};
+
+  if (!user) {
+    payload.error = 'User Not Found!';
+    return Promise.resolve({ status: 404, payload });
+  }
+
+  let company = await CompService.getCompany(compId);
+
+  if (!company) {
+    payload.error = 'Company Not Found!';
+    return Promise.resolve({ status: 404, payload });
+  }
+
+  for (let donation of donations) {
+    if (donation.currency === 'Gold') {
+      if (user.gold < donation.amount) {
+        allDonated = false;
+        continue;
+      }
+
+      user.gold -= donation.amount;
+      company.gold += donation.amount;
+    } else {
+      if (company.funds.currency !== donation.currency) {
+        allDonated = false;
+        continue;
+      }
+
+      let userCC = user.wallet.find(cc => cc.currency === donation.currency);
+
+      if (!userCC || userCC.amount < donation.amount) {
+        allDonated = false;
+        continue;
+      }
+
+      userCC.amount -= donation.amount;
+      company.funds.amount += donation.amount;
+    }
+  }
+
+  // Update Company
+  updates = { funds: { ...company.funds }, gold: company.gold };
+  let updated = await companies.findOneAndUpdate({ _id: compId }, { $set: updates });
+
+  if (!updated) {
+    payload.error = 'Failed to Update Company!';
+    return Promise.resolve({ status: 500, payload });
+  }
+
+  // Update User
+  updates = { gold: user.gold, wallet: [...user.wallet] };
+  updated = await users.findOneAndUpdate({ _id: id }, { $set: updates });
+
+  if (!updated) {
+    payload.error = 'Failed to Update User!';
+    return Promise.resolve({ status: 500, payload });
+  } else if (!allDonated) {
+    payload.error = 'Not All Money Deposited!';
+    payload.errorDetail = 'Insufficient funds for one or more deposits';
+    return Promise.resolve({ status: 400, payload });
+  }
+
+  payload.success = true;
+  return Promise.resolve({ status: 200, payload });
+}
+
+const withdraw_items = async (id, compId, giftItems) => {
+  const users = db.getDB().collection('users');
+  const companies = db.getDB().collection('companies');
+  let user = await users.findOne({ _id: id });
+  let allWithdrawn = true;
+  let updates = {};
+  let payload = {};
+
+  if (!user) {
+    payload.error = 'User Not Found!';
+    return Promise.resolve({ status: 404, payload });
+  }
+
+  let company = await CompService.getCompany(compId);
+
+  if (!company) {
+    payload.error = 'Company Not Found!';
+    return Promise.resolve({ status: 404, payload });
+  }
+
+  for (let gift of giftItems) {
+    let giftIndex = company.inventory.findIndex(item => item.id === gift.id);
+
+    if (giftIndex === -1) {
+      allWithdrawn = false;
+      continue;
+    }
+
+    // Remove item from Company
+    let giftItem = company.inventory.splice(giftIndex, 1);
+    if (giftItem.quantity < gift.quantity) {
+      allGifted = false;
+      continue;
+    } else if (giftItem.quantity > gift.quantity) {
+      giftItem.quantity -= gift.quantity;
+      company.inventory.push(giftItem);
+    }
+
+    giftIndex = user.inventory.findIndex(item => item.id === gift.id);
+    if (giftIndex === -1) {
+      user.inventory.push({ id: gift.id, quantity: gift.quantity });
+    } else {
+      user.inventory[giftIndex].quantity += gift.quantity;
+    }
+  }
+
+  // Update User
+  updates = { inventory: [...user.inventory] };
+  let updated = await users.findOneAndUpdate({ _id: id }, { $set: updates });
+
+  if (!updated) {
+    payload.error = 'Failed to Update User!';
+    return Promise.resolve({ status: 500, payload });
+  }
+
+  // Update Company
+  updates = { inventory: [...company.inventory] };
+  updated = await companies.findOneAndUpdate({ _id: compId }, { $set: updates });
+
+  if (!updated) {
+    payload.error = 'Failed to Update Company!';
+    return Promise.resolve({ status: 500, payload });
+  } else if (!allWithdrawn) {
+    payload.error = 'Not All Items Withdrawn!';
+    payload.errorDetail = 'Insufficient quantity of items to complete one or more withdrawals';
+    return Promise.resolve({ status: 400, payload });
+  }
+
+  payload.success = true;
+  return Promise.resolve({ status: 200, payload });
+}
+
+const withdraw_money = async (id, compId, donations) => {
+  const users = db.getDB().collection('users');
+  const companies = db.getDB().collection('companies');
+  let user = await users.findOne({ _id: id });
+  let allWithdrawn = true;
+  let updates = {};
+  let payload = {};
+
+  if (!user) {
+    payload.error = 'User Not Found!';
+    return Promise.resolve({ status: 404, payload });
+  }
+
+  let company = await CompService.getCompany(compId);
+
+  if (!company) {
+    payload.error = 'Company Not Found!';
+    return Promise.resolve({ status: 404, payload });
+  }
+
+  for (let donation of donations) {
+    if (donation.currency === 'Gold') {
+      if (company.gold < donation.amount) {
+        allWithdrawn = false;
+        continue;
+      }
+
+      company.gold -= donation.amount;
+      user.gold += donation.amount;
+    } else {
+      if (company.funds.currency !== donation.currency) {
+        allWithdrawn = false;
+        continue;
+      }
+
+      let userCC = user.wallet.find(cc => cc.currency === donation.currency);
+
+      if (!userCC) {
+        user.wallet.push({ currency: donation.currency, amount: donation.amount });
+      } else {
+        userCC.amount += donation.amount;
+      }
+      company.funds.amount -= donation.amount;
+    }
+  }
+
+  // Update User
+  updates = { gold: user.gold, wallet: [...user.wallet] };
+  let updated = await users.findOneAndUpdate({ _id: id }, { $set: updates });
+
+  if (!updated) {
+    payload.error = 'Failed to Update User!';
+    return Promise.resolve({ status: 500, payload });
+  }
+
+  // Update Company
+  updates = { funds: { ...company.funds }, gold: company.gold };
+  updated = await companies.findOneAndUpdate({ _id: compId }, { $set: updates });
+
+  if (!updated) {
+    payload.error = 'Failed to Update Company!';
+    return Promise.resolve({ status: 500, payload });
+  } else if (!allWithdrawn) {
+    payload.error = 'Not All Money Withdrawn!';
+    payload.errorDetail = 'Insufficient funds for one or more withdrawals';
+    return Promise.resolve({ status: 400, payload });
+  }
+
+  payload.success = true;
+  return Promise.resolve({ status: 200, payload });
+}
+
+const create_party = async (id, partyDetails) => {
+  const users = db.getDB().collection('users');
+  let user = await users.findOne({ _id: id });
+  let payload = {};
+
+  if (!user) {
+    payload.error = 'User Not Found!';
+    return Promise.resolve({ status: 404, payload });
+  } else if (user.gold < 15.0) {
+    payload.error = 'Insufficient Funds!';
+    return Promise.resolve({ status: 400, payload });
+  }
+
+  // Create Party
+  partyDetails.president = id;
+  partyDetails.country = user.country;
+  partyDetails.members = [id];
+  let result = await PartyService.createParty(partyDetails)
+  if (!result) {
+    payload.error = 'Failed to Create Party!';
+    return Promise.resolve({ status: 500, payload });
+  }
+
+  // Update User
+  let updates = { party: result.partyId, gold: user.gold - 15.0 };
+  let updated = await users.findOneAndUpdate({ _id: id }, { $set: updates });
+
+  if (!updated) {
+    payload.error = 'Failed to Update User!';
+    return Promise.resolve({ status: 500, payload });
+  }
+
+  payload = { success: true, partyId: result.partyId };
+  return Promise.resolve({ status: 200, payload });
+}
+
+const join_party = async (id, partyId) => {
+  const users = db.getDB().collection('users');
+  let user = await users.findOne({ _id: id });
+  let payload = {};
+
+  if (!user) {
+    payload.error = 'User Not Found!';
+    return Promise.resolve({ status: 404, payload });
+  }
+
+  let result = await PartyService.joinParty(partyId, id);
+  
+  if (result.error) {
+    payload.error = result.error;
+    return Promise.resolve({ status: result.status, payload });
+  }
+
+  let updates = { party: partyId };
+  let updated = await users.findOneAndUpdate({ _id: id }, { $set: updates });
+
+  if (updated) {
+    payload.success = true;
+    return Promise.resolve({ status: 200, payload });
+  }
+
+  payload.error = 'Something Went Wrong!';
+  return Promise.resolve({ status: 500, payload });
+}
+
+const leave_party = async (id, partyId) => {
+  const users = db.getDB().collection('users');
+  let user = await users.findOne({ _id: id });
+  let payload = {};
+
+  if (!user) {
+    payload.error = 'User Not Found!';
+    return Promise.resolve({ status: 404, payload });
+  }
+
+  let result = await PartyService.leaveParty(partyId, id);
+
+  if (result.error) {
+    payload.error = result.error;
+    return Promise.resolve({ status: result.status, payload });
+  }
+
+  let updates = { party: 0 };
+  let updated = await users.findOneAndUpdate({ _id: id }, { $set: updates });
+
+  if (updated) {
+    payload.success = true;
+    return Promise.resolve({ status: 200, payload });
+  }
+
+  payload.error = 'Something Went Wrong!';
+  return Promise.resolve({ status: 500, payload });
 }
 
 export default MemberService;

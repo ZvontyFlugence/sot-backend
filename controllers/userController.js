@@ -3,6 +3,7 @@ import auth from '../middleware/auth';
 
 import CountryService from '../services/countryService';
 import CompService from '../services/compService';
+import ElectionService from '../services/electionService';
 import MemberService from '../services/memberService';
 import RegionService from '../services/regionService';
 
@@ -80,7 +81,13 @@ router.patch('/action', auth, async (req, res) => {
       return err;
     });
 
-  return res.status(200).json(result.payload);
+  return res.status(result.status).json(result.payload);
+});
+
+router.post('/vote', auth, async (req, res) => {
+  let result = await ElectionService.vote(req.user_id, req.body);
+
+  return res.status(result.status).json(result.payload);
 });
 
 router.get('/companies', auth, async (req, res) => {

@@ -19,4 +19,14 @@ router.post('/countries', async (req, res) => {
   return res.status(result.status).json(result.payload);
 });
 
+router.post('/parties', async (req, res) => {
+  let result = await StatsService.getPartyStats(req.body);
+  return res.status(result.status).json(result.payload);
+});
+
+router.post('/newspapers', async (req, res) => {
+  let result = await StatsService.getNewspaperStats(req.body);
+  return res.status(result.status).json(result.payload);
+});
+
 export default router;
