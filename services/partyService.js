@@ -1,11 +1,19 @@
 import db from './dbService';
+import { format, addMonths } from 'date-fns';
 
 let PartyService = {};
 
 const PartyActions = {
+  ADD_CONGRESS_CANDIDATE: 'ADD_CONGRESS_CANDIDATE',
+  ADD_CP_CANDIDATE: 'ADD_CP_CANDIDATE',
   ADD_PP_CANDIDATE: 'ADD_PARTY_PRESIDENT_CANDIDATE',
+  CONFIRM_CONGRESS_CANDIDATE: 'CONFIRM_CONGRESS_CANDIDATE',
+  CONFIRM_CP_CANDIDATE: 'CONFIRM_CP_CANDIDATE',
   EDIT: 'EDIT',
+  FORM_GOV: 'FORM_GOV',
   RESIGN_FROM_PP: 'RESIGN_FROM_PP',
+  RESIGN_FROM_CONGRESS_ELECTION: 'RESIGN_FROM_CONGRESS_ELECTION',
+  RESIGN_FROM_CP_ELECTION: 'RESIGN_FROM_CP_ELECTION',
   RESIGN_FROM_PP_ELECTION: 'RESIGN_FROM_PP_ELECTION',
   SET_VP: 'SET_VP',
   UPLOAD: 'UPLOAD',
@@ -139,10 +147,24 @@ PartyService.handleVote = async (id, userId, candidateId) => {
 
 PartyService.doAction = async (id, body) => {
   switch (body.action.toUpperCase()) {
+    case PartyActions.ADD_CONGRESS_CANDIDATE:
+      return await add_congress_candidate(id, body.data);
+    case PartyActions.ADD_CP_CANDIDATE:
+      return await add_cp_candidate(id, body.data);
     case PartyActions.ADD_PP_CANDIDATE:
       return await add_pp_candidate(id, body.userId);
+    case PartyActions.CONFIRM_CONGRESS_CANDIDATE:
+      return await confirm_congress_candidate(id, body.userId);
+    case PartyActions.CONFIRM_CP_CANDIDATE:
+      return await confirm_cp_candidate(id, body.userId);
     case PartyActions.EDIT:
       return await edit_party(id, body.updates);
+    case PartyActions.FORM_GOV:
+      return await form_gov(id, body.government, body.pp);
+    case PartyActions.RESIGN_FROM_CONGRESS_ELECTION:
+      return await resign_from_congress_election(id, body.userId);
+    case PartyActions.RESIGN_FROM_CP_ELECTION:
+      return await resign_from_cp_election(id, body.userId);
     case PartyActions.RESIGN_FROM_PP:
       return await resign_from_pp(id, body.userId);
     case PartyActions.RESIGN_FROM_PP_ELECTION:
@@ -289,6 +311,355 @@ const set_vp = async (id, userId, memberId) => {
 
   let updated = await PartyService.updateParty(id, { vp: memberId });
   
+  if (updated) {
+    payload.success = true;
+    return Promise.resolve({ status: 200, payload });
+  }
+
+  payload.error = 'Something Went Wrong!';
+  return Promise.resolve({ status: 500, payload });
+}
+
+const form_gov = async (id, government, pp) => {
+  const countries = db.getDB().collection('countries');
+  const users = db.getDB().collection('users');
+  let party = await PartyService.getParty(id);
+  let allUpdated = true;
+  let payload = {};
+
+  if (!party) {
+    payload.error = 'Party Not Found!';
+    return Promise.resolve({ status: 404, payload });
+  } else if (!party.members.includes(pp)) {
+    payload.error = 'Invalid Party President Replacement!';
+    payload.errorDetail = 'Chosen replacement isn\'t a party member!';
+    return Promise.resolve({ status: 400, payload });
+  } else if (government.president !== party.president) {
+    payload.error = 'You are cannot take this action!';
+    payload.errorDetail = 'You are not the Party President!';
+    return Promise.resolve({ status: 400, payload });
+  }
+
+  let updates = { president: pp, vp: null };
+  let updated = await PartyService.updateParty(id, updates);
+
+  if (!updated) {
+    // error
+    payload.error = 'Something Went Wrong!';
+    payload.errorDetail = 'Failed to update Party!';
+    return Promise.resolve({ status: 500, payload });
+  }
+
+  // Update all affected users w/ alert
+  let alert = { read: false, type: 'GOV_FORMED', timestamp: new Date(Date.now()) };
+  alert.message = 'You have become the Country President in the newly formed government!';
+  updated = await users.updateOne({ _id: government.president }, { $push: { ['alerts']: alert } });
+
+  if (!updated) {
+    payload.error = 'Not All Users Updated!';
+    payload.errorDetail = 'Failed to update all users and country!';
+    return Promise.resolve({ status: 500, payload });
+  }
+
+  if (government.vp) {
+    alert.message = 'You have become the Vice Country President in the newly formed government!';
+    updated = await users.updateOne({ _id: government.vp }, { $push: { ['alerts']: alert } });
+
+    if (!updated) {
+      payload.error = 'Not All Users Updated!';
+      payload.errorDetail = 'Failed to update VP, Cabinet, Congress, and Country!';
+      return Promise.resolve({ status: 500, payload });
+    }
+  }
+
+  for (let position in government.cabinet) {
+    let positionTitle = undefined;
+    switch (position) {
+      case 'mofa':
+        positionTitle = 'Minister of Foreign Affairs';
+        break;
+      case 'mod':
+        alert.message = 'Minister of Defense';
+      case 'mot':
+        alert.message = 'Minister of the Treasury';
+      default:
+        break;
+    }
+
+    if (!positionTitle) break;
+
+    alert.message = `You have become the ${positionTitle} in the newly formed government!`;
+
+    updated = await users.updateOne({ _id: government.cabinet[position] }, { $push: { ['alerts']: alert } });
+
+    if (!updated)
+      allUpdated = false;
+  }
+
+  if (!allUpdated) {
+    payload.error = 'Not All Users Updated!';
+    payload.errorDetail = 'Failed to update Cabinet, Congress, and Country!';
+    return Promise.resolve({ status: 500, payload });
+  }
+
+  alert.message = 'You have become a member of Congress in the newly formed government!';
+  updated = await users.updateMany({ _id: { $in: government.congress } }, { $push: { ['alerts']: alert }});
+
+  if (!updated) {
+    payload.error = 'Not All Users Updated!';
+    payload.errorDetail = 'Failed to update Congress and Country!';
+    return Promise.resolve({ status: 500, payload });
+  }
+
+  updates = { government };
+  updated = await countries.updateOne({ _id: party.country }, { $set: updates });
+
+  if (updated) {
+    payload.success = true;
+    return Promise.resolve({ status: 200, payload });
+  }
+
+  payload.error = 'Something Went Wrong!';
+  payload.errorDetail = 'Failed to update country!';
+  return Promise.resolve({ status: 500, payload });
+}
+
+const add_congress_candidate = async (id, data) => {
+  const countries = db.getDB().collection('countries');
+  let party = await PartyService.getParty(id);
+  let payload = {};
+
+  if (!party) {
+    payload.error = 'Party Not Found!';
+    return Promise.resolve({ status: 404, payload });
+  } else if (!party.members.includes(data.candidateID)) {
+    payload.error = 'Candidate is not a Party Member!';
+    return Promise.resolve({ status: 400, payload });
+  }
+
+  let country = await countries.findOne({ _id: party.country });
+
+  if (!country) {
+    payload.error = 'Country Not Found!';
+    return Promise.resolve({ status: 404, payload });
+  }
+
+  let electionIndex = country.congressElections.length - 1;
+  let updates = {
+    [`congressElections.${electionIndex}.candidates`]: {
+      id: data.candidateID,
+      region: data.regionID,
+      party: id,
+      confirmed: false,
+    }
+  };
+
+  let updated = await countries.updateOne({ _id: party.country }, { $push: updates });
+
+  if (updated) {
+    payload.success = true;
+    return Promise.resolve({ status: 200, payload });
+  }
+
+  payload.error = 'Something Went Wrong!';
+  return Promise.resolve({ status: 500, payload });
+}
+
+const add_cp_candidate = async (id, data) => {
+  const countries = db.getDB().collection('countries');
+  let party = await PartyService.getParty(id);
+  let payload = {};
+
+  if (!party) {
+    payload.error = 'Party Not Found!';
+    return Promise.resolve({ status: 404, payload });
+  } else if (!party.members.includes(data.candidateID)) {
+    payload.error = 'Candidate is not a Party Member!';
+    return Promise.resolve({ status: 400, payload });
+  }
+
+  let country = await countries.findOne({ _id: party.country });
+
+  if (!country) {
+    payload.error = 'Country Not Found!';
+    return Promise.resolve({ status: 404, payload });
+  }
+
+  let electionIndex = country.presidentElections.length - 1;
+  let updates = {
+    [`presidentElections.${electionIndex}.candidates`]: {
+      id: data.candidatesID,
+      party: id,
+      confirmed: false,
+    }
+  };
+
+  let updated = await countries.updateOne({ _id: party.country }, { $push: updates });
+
+  if (updated) {
+    payload.success = true;
+    return Promise.resolve({ status: 200, payload });
+  }
+
+  payload.error = 'Something Went Wrong!';
+  return Promise.resolve({ status: 500, payload });
+}
+
+const resign_from_congress_election = async (id, userId) => {
+  const countries = db.getDB().collection('countries');
+  let party = await PartyService.getParty(id);
+  let payload = {};
+
+  if (!party) {
+    payload.error = 'Party Not Found!';
+    return Promise.resolve({ status: 404, payload });
+  }
+
+  let country = await countries.findOne({ _id: party.country });
+
+  if (!country) {
+    payload.error = 'Country Not Found!';
+    return Promise.resolve({ status: 404, payload });
+  }
+
+  let electionIndex = country.congressElections.length - 1;
+  let candidateIndex = country.congressElections[electionIndex].candidates.findIndex(can => can.id === userId);
+
+  if (candidateIndex === -1) {
+    payload.error = 'You are not a Candidate!';
+    return Promise.resolve({ status: 400, payload });
+  }
+
+  country.congressElections[electionIndex].candidates.splice(candidateIndex, 1);
+  let updates = { [`congressElections.${electionIndex}.candidates`]: [...country.congressElections[electionIndex].candidates] };
+  let updated = await countries.updateOne({ _id: party.country }, { $set: updates });
+
+  if (updated) {
+    payload.success = true;
+    return Promise.resolve({ status: 200, payload });
+  }
+
+  payload.error = 'Something Went Wrong!';
+  return Promise.resolve({ status: 500, payload });
+}
+
+const resign_from_cp_election = async (id, userId) => {
+  const countries = db.getDB().collection('countries');
+  let party = await PartyService.getParty(id);
+  let payload = {};
+
+  if (!party) {
+    payload.error = 'Party Not Found!';
+    return Promise.resolve({ status: 404, payload });
+  }
+
+  let country = await countries.findOne({ _id: party.country });
+
+  if (!country) {
+    payload.error = 'Country Not Found!';
+    return Promise.resolve({ status: 404, payload });
+  }
+
+  let electionIndex = country.presidentElections.length - 1;
+  let candidateIndex = country.presidentElections[electionIndex].candidates.findIndex(can => can.id === userId);
+
+  if (candidateIndex === -1) {
+    payload.error = 'You are not a Candidate!';
+    return Promise.resolve({ status: 400, payload });
+  }
+
+  country.presidentElections[electionIndex].candidates.splice(candidateIndex, 1);
+  let updates = { [`presidentElections.${electionIndex}.candidates`]: [...country.presidentElections[electionIndex].candidates] };
+  let updated = await countries.updateOne({ _id: party.country }, { $set: updates });
+
+  if (updated) {
+    payload.success = true;
+    return Promise.resolve({ status: 200, payload });
+  }
+
+  payload.error = 'Something Went Wrong!';
+  return Promise.resolve({ status: 500, payload });
+}
+
+const confirm_congress_candidate = async (id, userId) => {
+  const countries = db.getDB().collection('countries');
+  let party = await PartyService.getParty(id);
+  let payload = {};
+
+  if (!party) {
+    payload.error = 'Party Not Found!';
+    return Promise.resolve({ status: 404, payload });
+  }
+
+  let country = await countries.findOne({ _id: party._id });
+
+  if (!country) {
+    payload.error = 'Country Not Found!';
+    return Promise.resolve({ status: 404, payload });
+  }
+
+  let electionIndex = country.congressElections.length - 1;
+  let candidateIndex = country.congressElections[electionIndex].candidates.findIndex(can => can.id === userId);
+
+  if (candidateIndex === -1) {
+    payload.error = 'User is not a Candidate!';
+    return Promise.resolve({ status: 400, payload });
+  }
+
+  let updates = {
+    [`congressElections.${electionIndex}.candidates.${candidateIndex}`]: {
+      ...country.congressElections[electionIndex].candidates[candidateIndex],
+      votes = 0,
+      confirmed: true,
+    }
+  };
+
+  let updated = await countries.updateOne({ _id: party.country }, { $set: updates });
+
+  if (updated) {
+    payload.success = true;
+    return Promise.resolve({ status: 200, payload });
+  }
+
+  payload.error = 'Something Went Wrong!';
+  return Promise.resolve({ status: 500, payload });
+}  
+
+const confirm_cp_candidate = async (id, userId) => {
+  const countries = db.getDB().collection('countries');
+  let party = await PartyService.getParty(id);
+  let payload = {};
+
+  if (!party) {
+    payload.error = 'Party Not Found!';
+    return Promise.resolve({ status: 404, payload });
+  }
+
+  let country = await countries.findOne({ _id: party.country });
+
+  if (!country) {
+    payload.error = 'Country Not Found!';
+    return Promise.resolve({ status: 404, payload });
+  }
+
+  let electionIndex = country.presidentElections.length - 1;
+  let candidateIndex = country.presidentElections[electionIndex].candidates.findIndex(can => can.id === userId);
+
+  if (candidateIndex === -1) {
+    payload.error = 'User is not a Candidate!';
+    return Promise.resolve({ status: 400, payload });
+  }
+
+  let updates = {
+    [`presidentElections.${electionIndex}.candidates.${candidateIndex}`]: {
+      ...country.presidentElections[electionIndex].candidates[candidateIndex],
+      votes = 0,
+      confirmed = true,
+    }
+  };
+
+  let updated = await countries.updateOne({ _id: party.country }, { $set: updates });
+
   if (updated) {
     payload.success = true;
     return Promise.resolve({ status: 200, payload });

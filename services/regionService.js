@@ -61,6 +61,40 @@ RegionService.startingRegion = async country_id => {
   return region_list[index];
 };
 
+RegionService.handleVote = async (id, candidateId) => {
+  const countries = db.getDB().collection('countries');
+  let region = await RegionService.getRegion(id);
+
+  if (!region) {
+    return { status: 404, payload: { error: 'Region Not Found!' } };
+  }
+
+  let country = await countries.findOne({ _id: region.owner });
+
+  if (!country) {
+    return { status: 404, payload: { error: 'Country Not Found!' } };
+  }
+
+  let electionIndex = country.congressElections.length - 1;
+  let candidateIndex = country.congressElections[electionIndex].candidates.findIndex(can => can.id === candidateId);
+
+  if (candidateIndex === -1) {
+    return { status: 404, payload: { error: 'Candidate Not Found!' } };
+  }
+
+  let updates = {
+    [`congressElections.${electionIndex}.candidates.${candidateIndex}.votes`]:
+      country.congressElections[electionIndex].candidates[candidateIndex].votes + 1,
+  };
+  let updated = await countries.updateOne({ _id: region.owner }, { $set: updates });
+
+  if (updated) {
+    return { status: 200, payload: { success: true } };
+  }
+
+  return { status: 500, payload: { error: 'Something Went Wrong!' } };
+}
+
 // DEVELOPMENT ONLY
 RegionService.updateNeighbors = async data => {
   const regions = db.getDB().collection('regions');

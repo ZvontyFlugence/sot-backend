@@ -3,13 +3,38 @@ import db from './dbService';
 const CountryService = {};
 
 CountryService.getCountries = async () => {
-  const countries = db.getDB().collection('countries');
-  return await countries.find({}).toArray();
+  const countriesColl = db.getDB().collection('countries');
+  let countries = await countriesColl.find({}).toArray();
+
+  countries.forEach(async country => {
+    let regions = await CountryService.getRegions(country._id);
+    let congressSeats = 10;
+    if (regions && regions.length <= 25) {
+      congressSeats = regions.length * 2;
+    } else if (regions && regions.length > 25) {
+      congressSeats = 50 + (regions.length - 25);
+    }
+
+    country.government.congressSeats = congressSeats;
+  });
+
+  return countries;
 };
 
 CountryService.getCountry = async id => {
   const countries = db.getDB().collection('countries');
-  return await countries.findOne({ _id: id });
+  let country = await countries.findOne({ _id: id });
+
+  let regions = await CountryService.getRegions(id);
+  let congressSeats = 10;
+  if (regions && regions.length <= 25) {
+    congressSeats = regions.length * 2;
+  } else if (regions && regions.length > 25) {
+    congressSeats = 50 + (regions.length - 25);
+  }
+
+  country.government.congressSeats = congressSeats;
+  return country;
 };
 
 CountryService.getCountryByFlagCode = async flag_code => {
@@ -124,6 +149,66 @@ CountryService.getRegions = async id => {
 CountryService.getParties = async id => {
   let parties = db.getDB().collection('parties');
   return await parties.find({ country: id }).toArray();
+}
+
+CountryService.handleVote = async (id, regionId, candidateId) => {
+  const regions = db.getDB().collection('regions');
+  const countries = db.getDB().collection('countries');
+  let country = await CountryService.getCountry(id);
+  let updates = {};
+
+  if (!country) {
+    return { status: 404, payload: { error: 'Country Not Found!' } };
+  }
+
+  let region = await regions.findOne({ _id: regionId });
+
+  if (!region) {
+    return { status: 404, payload: { error: 'Region Not Found!' } };
+  } else if (region.owner !== id) {
+    return { status: 400, payload: { error: 'Invalid Voting Region!' } };
+  }
+
+  let electionIndex = country.presidentElections.length - 1;
+  let candidateIndex = country.presidentElections[electionIndex].candidates.findIndex(can => can.id === candidateId);
+
+  if (candidateIndex === -1) {
+    return { status: 404, payload: { error: 'Candidate Not Found!' } };
+  }
+
+  let votesIndex = country.presidentElections[electionIndex].candidate[candidateIndex].votes.findIndex(voteObj => voteObj.region === regionId);
+
+  if (votesIndex === -1) {
+    updates = {
+      [`country.presidentElections.${electionIndex}.candidate.${candidateIndex}.votes`]: {
+        region: regionId,
+        tally: 1,
+      },
+    };
+
+    // Push update
+    let updated = await countries.updateOne({ _id: id }, { $push: updates });
+
+    if (updated) {
+      return { status: 200, payload: { success: true } };
+    }
+
+    return { status: 500, payload: { error: 'Something Went Wrong!' } };
+  } else {
+    updates = {
+      [`country.presidentElections.${electionIndex}.candidate.${candidateIndex}.votes.${votesIndex}.tally`]:
+        country.presidentElections[electionIndex].candidate[candidateIndex].votes[votesIndex].tally + 1,
+    };
+
+    // Set Update
+    let updated = await countries.updateOne({ _id: id }, { $set: updates });
+
+    if (updated) {
+      return { status: 200, payload: { success: true } };
+    }
+
+    return { status: 500, payload: { error: 'Something Went Wrong!' } };
+  }
 }
 
 export default CountryService;

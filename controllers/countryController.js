@@ -2,6 +2,7 @@ import express from 'express';
 import auth from '../middleware/auth';
 import CountryService from '../services/countryService';
 import NewsService from '../services/newsService';
+import PartyService from '../services/partyService';
 
 const router = express.Router();
 
@@ -107,6 +108,23 @@ router.get('/:id/parties', auth, async (req, res) => {
   let parties = await CountryService.getParties(countryId);
 
   return res.status(200).json({ parties });
-})
+});
+
+router.get('/:id/politicians', auth, async (req, res) => {
+  let countryId = -1;
+  try {
+    countryId = Number.parseInt(req.params.id);
+  } catch (e) {
+    return res.status(400).json({ error: 'Invalid Country ID!' });
+  }
+
+  let citizens = await CountryService.getCitizens(countryId);
+  let politicians = await Promise.all(citizens.filter(citizen => citizen.party > 0 && citizen._id !== req.user_id).map(async citizen => {
+    let party = await PartyService.getParty(citizen.party);
+    return { ...citizen, party };
+  }));
+
+  return res.status(200).json({ politicians });
+});
 
 export default router;
