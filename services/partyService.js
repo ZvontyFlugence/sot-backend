@@ -8,8 +8,8 @@ const PartyActions = {
   ADD_CP_CANDIDATE: 'ADD_CP_CANDIDATE',
   ADD_PP_CANDIDATE: 'ADD_PARTY_PRESIDENT_CANDIDATE',
   CONFIRM_CONGRESS_CANDIDATE: 'CONFIRM_CONGRESS_CANDIDATE',
-  CONFIRM_CP_CANDIDATE: 'CONFIRM_CP_CANDIDATE',
   EDIT: 'EDIT',
+  ENDORSE_CP_CANDIDATE: 'ENDORSE_CP_CANDIDATE',
   FORM_GOV: 'FORM_GOV',
   RESIGN_FROM_PP: 'RESIGN_FROM_PP',
   RESIGN_FROM_CONGRESS_ELECTION: 'RESIGN_FROM_CONGRESS_ELECTION',
@@ -31,9 +31,6 @@ PartyService.createParty = async partyData => {
     createdOn: new Date(Date.now()),
     description: '',
     vp: null,
-    congressMembers: [],
-    presidentElections: [],
-    congressElections: [],
   }
 
   const res = await parties.insertOne(party_doc);
@@ -155,10 +152,10 @@ PartyService.doAction = async (id, body) => {
       return await add_pp_candidate(id, body.userId);
     case PartyActions.CONFIRM_CONGRESS_CANDIDATE:
       return await confirm_congress_candidate(id, body.userId);
-    case PartyActions.CONFIRM_CP_CANDIDATE:
-      return await confirm_cp_candidate(id, body.userId);
     case PartyActions.EDIT:
       return await edit_party(id, body.updates);
+    case PartyActions.ENDORSE_CP_CANDIDATE:
+      return await endorse_cp_candidate(id, body.candidateId);
     case PartyActions.FORM_GOV:
       return await form_gov(id, body.government, body.pp);
     case PartyActions.RESIGN_FROM_CONGRESS_ELECTION:
@@ -488,9 +485,9 @@ const add_cp_candidate = async (id, data) => {
   let electionIndex = country.presidentElections.length - 1;
   let updates = {
     [`presidentElections.${electionIndex}.candidates`]: {
-      id: data.candidatesID,
+      id: data.candidateID,
       party: id,
-      confirmed: false,
+      endorsed: [],
     }
   };
 
@@ -609,7 +606,7 @@ const confirm_congress_candidate = async (id, userId) => {
   let updates = {
     [`congressElections.${electionIndex}.candidates.${candidateIndex}`]: {
       ...country.congressElections[electionIndex].candidates[candidateIndex],
-      votes = 0,
+      votes: 0,
       confirmed: true,
     }
   };
@@ -625,8 +622,9 @@ const confirm_congress_candidate = async (id, userId) => {
   return Promise.resolve({ status: 500, payload });
 }  
 
-const confirm_cp_candidate = async (id, userId) => {
+const endorse_cp_candidate = async (id, candidateId) => {
   const countries = db.getDB().collection('countries');
+  const users = db.getDB().collection('users');
   let party = await PartyService.getParty(id);
   let payload = {};
 
@@ -643,7 +641,7 @@ const confirm_cp_candidate = async (id, userId) => {
   }
 
   let electionIndex = country.presidentElections.length - 1;
-  let candidateIndex = country.presidentElections[electionIndex].candidates.findIndex(can => can.id === userId);
+  let candidateIndex = country.presidentElections[electionIndex].candidates.findIndex(can => can.id === candidateId);
 
   if (candidateIndex === -1) {
     payload.error = 'User is not a Candidate!';
@@ -653,12 +651,27 @@ const confirm_cp_candidate = async (id, userId) => {
   let updates = {
     [`presidentElections.${electionIndex}.candidates.${candidateIndex}`]: {
       ...country.presidentElections[electionIndex].candidates[candidateIndex],
-      votes = 0,
-      confirmed = true,
+      votes: 0,
+      endorsed: [...country.presidentElections[electionIndex].candidates[candidateIndex].endorsed, id],
     }
   };
 
-  let updated = await countries.updateOne({ _id: party.country }, { $set: updates });
+  let alert = {
+    read: false,
+    type: `ENDORSED`,
+    message: `You have been endorsed by the ${party.name} for Country President!`,
+    timestamp: new Date(Date.now()),
+  };
+
+  let updated = await users.updateOne({ _id: candidateId }, { $push: { alerts: alert } });
+
+  if (!updated) {
+    payload.error = 'Failed to Endorse Candidate!';
+    paylor.errorDetail = 'Candidate could not be notified. Please try again.'
+    return Promise.resolve({ status: 500, payload });
+  }
+
+  updated = await countries.updateOne({ _id: party.country }, { $set: updates });
 
   if (updated) {
     payload.success = true;

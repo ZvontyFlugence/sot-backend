@@ -15,7 +15,9 @@ CountryService.getCountries = async () => {
       congressSeats = 50 + (regions.length - 25);
     }
 
-    country.government.congressSeats = congressSeats;
+    if (country.government) {
+      country.government.congressSeats = congressSeats;
+    }
   });
 
   return countries;
@@ -134,6 +136,7 @@ CountryService.getGoods = async id => {
 CountryService.getRegions = async id => {
   const regions = db.getDB().collection('regions');
   let owned_regions = await regions.find({ owner: id }).toArray();
+
   owned_regions.sort((a, b) => {
     if (a.name < b.name) {
       return -1;
@@ -143,7 +146,8 @@ CountryService.getRegions = async id => {
       return 0;
     }
   });
-  return owned_regions;
+
+  return Promise.resolve(owned_regions);
 }
 
 CountryService.getParties = async id => {
@@ -151,7 +155,7 @@ CountryService.getParties = async id => {
   return await parties.find({ country: id }).toArray();
 }
 
-CountryService.handleVote = async (id, regionId, candidateId) => {
+CountryService.handleVote = async (id, regionId, userId, candidateId) => {
   const regions = db.getDB().collection('regions');
   const countries = db.getDB().collection('countries');
   let country = await CountryService.getCountry(id);
@@ -176,12 +180,13 @@ CountryService.handleVote = async (id, regionId, candidateId) => {
     return { status: 404, payload: { error: 'Candidate Not Found!' } };
   }
 
-  let votesIndex = country.presidentElections[electionIndex].candidate[candidateIndex].votes.findIndex(voteObj => voteObj.region === regionId);
+  let votesIndex = country.presidentElections[electionIndex].candidates[candidateIndex].votes.findIndex(voteObj => voteObj.region === regionId);
 
   if (votesIndex === -1) {
     updates = {
-      [`country.presidentElections.${electionIndex}.candidate.${candidateIndex}.votes`]: {
+      [`presidentElections.${electionIndex}.candidates.${candidateIndex}.votes`]: {
         region: regionId,
+        users: [userId],
         tally: 1,
       },
     };
@@ -196,8 +201,10 @@ CountryService.handleVote = async (id, regionId, candidateId) => {
     return { status: 500, payload: { error: 'Something Went Wrong!' } };
   } else {
     updates = {
-      [`country.presidentElections.${electionIndex}.candidate.${candidateIndex}.votes.${votesIndex}.tally`]:
-        country.presidentElections[electionIndex].candidate[candidateIndex].votes[votesIndex].tally + 1,
+      [`presidentElections.${electionIndex}.candidates.${candidateIndex}.votes.${votesIndex}.tally`]:
+        country.presidentElections[electionIndex].candidates[candidateIndex].votes[votesIndex].tally + 1,
+      [`presidentElections.${electionIndex}.candidates.${candidateIndex}.votes.${votesIndex}.users`]:
+        [...country.presidentElections[electionIndex].candidates[candidateIndex].votes[votesIndex].users, userId],
     };
 
     // Set Update

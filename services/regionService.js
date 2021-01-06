@@ -61,6 +61,17 @@ RegionService.startingRegion = async country_id => {
   return region_list[index];
 };
 
+RegionService.getPopulation = async id => {
+  const users = db.getDB().collection('users');
+  let region = await RegionService.getRegion(id);
+
+  if (!region) {
+    return null;
+  }
+
+  return await users.find({ country: region.owner, location: id }).toArray();
+}
+
 RegionService.handleVote = async (id, candidateId) => {
   const countries = db.getDB().collection('countries');
   let region = await RegionService.getRegion(id);

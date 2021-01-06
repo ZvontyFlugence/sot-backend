@@ -4,6 +4,9 @@ import CountryService from '../services/countryService';
 import NewsService from '../services/newsService';
 import PartyService from '../services/partyService';
 
+// DEV:
+import db from '../services/dbService';
+
 const router = express.Router();
 
 router.get('/', async (_, res) => {
@@ -125,6 +128,25 @@ router.get('/:id/politicians', auth, async (req, res) => {
   }));
 
   return res.status(200).json({ politicians });
+});
+
+// DEVELOPMENT ONLY (QUICK EDIT COUNTRY)
+router.patch('/:id', async (req, res) => {
+  const countries = db.getDB().collection('countries');
+  let countryId = -1;
+  try {
+    countryId = Number.parseInt(req.params.id);
+  } catch (e) {
+    return res.status(400).json({ error: 'Invalid Country ID!' });
+  }
+
+  let updated = await countries.updateOne({ _id: countryId }, { $set: req.body });
+
+  if (updated) {
+    return res.status(200).json({ success: true });
+  } else {
+    return res.status(500).json({ success: false });
+  }
 });
 
 export default router;

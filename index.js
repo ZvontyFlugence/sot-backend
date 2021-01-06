@@ -12,3 +12,4 @@ require('./server');
 
 // Run Task Schedulers
 require('./schedulers/electionScheduler');
+require('./schedulers/frequentSchedulers');

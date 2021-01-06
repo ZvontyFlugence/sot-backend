@@ -68,16 +68,20 @@ ElectionService.createPartyElection = async () => {
 }
 
 ElectionService.activateCountryElection = async () => {
+  console.log('Activating Country Elections...');
   const countriesColl = db.getDB().collection('countries');
   let countries = await CountryService.getCountries();
   let allUpdated = true;
 
   countries.forEach(async country => {
     let electionIndex = country.presidentElections.length - 1;
+    let candidates = country.presidentElections[electionIndex].candidates.filter(can => can.endorsed.length > 0);
     let updated = await countriesColl.updateMany({}, {
       $set: {
         [`presidentElections.${electionIndex}.active`]: true,
         [`presidentElections.${electionIndex}.finished`]: false,
+        [`presidentElections.${electionIndex}.candidates`]: candidates,
+        [`presidentElections.${electionIndex}.system`]: country.government.electionSystem,
       }
     });
 
@@ -88,6 +92,8 @@ ElectionService.activateCountryElection = async () => {
 
   if (allUpdated) {
     console.log('Country President Elections Activated...');
+  } else {
+    console.log('Not All Activated...');
   }
 }
 
@@ -98,10 +104,12 @@ ElectionService.activateCongressElection = async () => {
 
   countries.forEach(async country => {
     let electionIndex = country.congressElections.length - 1;
+    let candidates = country.congressElections[electionIndex].candidates.filter(can => can.confirmed);
     let updated = await countriesColl.updateMany({}, {
       $set: {
         [`congressElections.${electionIndex}.active`]: true,
         [`congressElections.${electionIndex}.finished`]: false,
+        [`congressElections.${electionIndex}.candidates`]: candidates,
       }
     });
 
@@ -140,6 +148,7 @@ ElectionService.activatePartyElection = async () => {
 }
 
 ElectionService.closeCountryElection = async () => {
+  const users = db.getDB().collection('users');
   const countriesColl = db.getDB().collection('countries');
   let countries = await CountryService.getCountries();
   let allUpdated = true;
@@ -149,37 +158,145 @@ ElectionService.closeCountryElection = async () => {
     let election = country.presidentElections[electionIndex];
     let maxVotes = 0;
     let maxIndex = [];
+    let winner = 0;
+    let candidateTallies = {};
+    let ecResults = {};
 
-    for (let candidate of election.candidates) {
-      let votes = candidate.votes.reduce((accum, voteObj) => accum + voteObj.tally);
-      if (votes > maxVotes) {
-        maxVotes = votes;
-        maxIndex = [candidate.id];
-      } else if (votes === maxVotes) {
-        maxIndex.push(candidate.id);
+    if (election.system === 'Popular Vote') {
+      // Popular Vote System
+      for (let candidate of election.candidates) {
+        let votes = candidate.votes.reduce((accum, voteObj) => accum + voteObj.tally, 0);
+        if (votes > maxVotes) {
+          maxVotes = votes;
+          maxIndex = [candidate.id];
+        } else if (votes === maxVotes) {
+          maxIndex.push(candidate.id);
+        }
       }
+
+      if (maxIndex.length === 1)
+        winner = maxIndex[0];
+      else {
+        let maxXP = 0;
+        for (let userId of maxIndex) {
+          let user = await MemberService.getUser(userId);
+          if (user.xp > maxXP) {
+            maxXP = user.xp;
+            winner = user._id;
+          }
+        }
+      }
+    } else if (election.system === 'Electoral College') {
+      // Electoral College System
+      let regions = [];
+      let votes = {};
+      // Get each regions per-candidate results
+      for (let candidate of election.candidates) {
+        for (let voteObj of candidate.votes) {
+          if (!regions.includes(voteObj.region)) {
+            regions.push(voteObj.region);
+            votes[voteObj.region] = { [candidate.id]: voteObj.tally };
+          } else {
+            let index = regions.findIndex(reg => reg === voteObj.region);
+            votes[index][candidate.id] = voteObj.tally;
+          }
+        }
+      }
+      
+      // Compare candidate results in each region to decide region winner
+      let regionWinners = [];
+      for (let region of regions) {
+        let regionWinner = null;
+        let regionMaxVotes = 0;
+        for (let candidate in votes[region]) {          
+          if (votes[region][candidate] > regionMaxVotes) {
+            regionMaxVotes = votes[region][candidate];
+            regionWinner = candidate;
+          } else if (votes[region][candidate] === regionMaxVotes) {
+            let canA = await MemberService.getUser(regionWinner);
+            let canB = await MemberService.getUser(candidate);
+
+            if (canB && canA && canB.xp > canA.xp) {
+              regionWinner = candidate;
+            }
+          }
+        }
+        regionWinners.push(regionWinner);
+        ecResults[region] = votes[region];
+      }
+
+      // Tally total votes for each regionWinner
+      let finalTally = [];
+      let countryPop = await CountryService.getPopulation(country._id);
+      for (let region of regions) {
+        let regionCitizens = await users.find({ country: country._id, location: region }).toArray();
+        let regionPop = regionCitizens.length;
+        let percent = (regionPop / countryPop);
+        let tally = Math.round(country.government.totalElectoralVotes * percent);
+        finalTally.push(tally);
+      }
+
+      // Sum total votes for each candidate
+      for (let region of regions) {
+        let index = regions.findIndex(reg => reg === region);
+        let winningCandidate = regionWinners[index];
+        if (!candidateTallies[winningCandidate]) {
+          candidateTallies[winningCandidate] = finalTally[index];
+        } else {
+          candidateTallies[winningCandidate] += finalTally[index];
+        }
+      }
+
+      // Decide election winner by votes or xp in the case of a tie
+      let winningCandidate = null;
+      let maxVotes = 0;
+      for (let candidate in candidateTallies) {
+        if (candidateTallies[candidate] > maxVotes) {
+          maxVotes = candidateTallies[candidate];
+          winningCandidate = candidate;
+        } else if (candidateTallies[candidate] === maxVotes) {
+          let canA = await MemberService.getUser(winningCandidate);
+          let canB = await MemberService.getUser(candidate);
+
+          if (canB && canA && canB.xp > canA.xp) {
+            winningCandidate = candidate;
+          }
+        }
+      }
+
+      winner = winningCandidate;
     }
 
-    let winner = 0;
-    if (maxIndex.length === 1)
-      winner = maxIndex[0];
-    else {
-      let maxXP = 0;
-      for (let userId of maxIndex) {
-        let user = await MemberService.getUser(userId);
-        if (user.xp > maxXP) {
-          maxXP = user.xp;
-          winner = user._id;
-        }
+    if (typeof winner === 'string') {
+      winner = Number.parseInt(winner);
+    }
+
+    if (winner && winner !== 0) {
+      let alert = {
+        read: false,
+        type: 'ELECTED_CP',
+        message: 'You have been elected as Country President and awarded 5 Gold!',
+        timestamp: new Date(Date.now()),
+      };
+      let winningUser = await MemberService.getUser(winner);
+      let gold = winningUser.gold + 5.00;
+      let alerts = [...winningUser.alerts, alert];
+      let updated = await users.updateOne({ _id: winner }, { $set: { gold, alerts } });
+      if (!updated) {
+        allUpdated = false;
       }
     }
 
     let updated = await countriesColl.updateOne({ _id: country._id }, {
       $set: {
         ['government.president']: winner !== 0 ? winner : null,
+        [`government.vp`]: null,
+        [`government.cabinet`]: { mofa: null, mod: null, mot: null },
         [`presidentElections.${electionIndex}.active`]: false,
         [`presidentElections.${electionIndex}.finished`]: true,
-        [`presidentElections.${electionIndex}.winner`]: winner,
+        [`presidentElections.${electionIndex}.winner`]: winner !== 0 ? winner : null,
+        [`presidentElections.${electionIndex}.tally`]: election.system === 'Electoral College' ? candidateTallies : undefined,
+        [`presidentElections.${electionIndex}.ecResults`]: election.system === 'Electoral College' ? ecResults : undefined,
       }
     });
 
@@ -343,21 +460,21 @@ ElectionService.vote = async (userId, data) => {
 
   switch (data.scope) {
     case 'congress':
-      let result = await RegionService.handleVote(user.location, data.candidate);
+      let result = await RegionService.handleVote(user.residence, data.candidate);
       if (!result) {
         payload.error = 'Something Went Wrong!';
         return Promise.resolve({ status: 500, payload });
       }
       return Promise.resolve(result);
     case 'president':
-      let result = await CountryService.handleVote(user.country, user.location, data.candidate);
+      result = await CountryService.handleVote(user.country, user.residence, userId, data.candidate);
       if (!result) {
         payload.error = 'Something Went Wrong!';
         return Promise.resolve({ status: 500, payload });
       }
       return Promise.resolve(result);
     case 'party':
-      let result = await PartyService.handleVote(user.party, userId, data.candidate);
+      result = await PartyService.handleVote(user.party, userId, data.candidate);
       if (!result) {
         payload.error = 'Something Went Wrong!';
         return Promise.resolve({ status: 500, payload });

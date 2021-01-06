@@ -112,6 +112,11 @@ router.get('/companies', auth, async (req, res) => {
 router.get('/:id', auth, async (req, res) => {
   let id = Number.parseInt(req.params.id);
   const profile = await MemberService.getUser(id);
+
+  if (!profile) {
+    return res.status(404).json({ err: 'Profile Not Found' });
+  }
+
   const country = await CountryService.getCountry(profile.country);
   const region = await RegionService.getRegion(profile.location);
   const regionOwner = await CountryService.getCountry(region.owner._id);

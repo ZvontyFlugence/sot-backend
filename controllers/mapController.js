@@ -11,6 +11,7 @@ router.get('/regions', async (req, res) => {
     const countries = db.getDB().collection('countries');
     let region_list = await Promise.all(list.map(async region => {
       let owner = await countries.findOne({ _id: region.owner });
+
       return { ...region, owner };
     }));
 
